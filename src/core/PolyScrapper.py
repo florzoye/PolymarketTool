@@ -1,15 +1,33 @@
 import asyncio
 import aiohttp
-from fake_useragent import FakeUserAgent
-from pprint import pprint
 
+from fake_useragent import FakeUserAgent
 from utils.customprint import CustomPrint
+from utils.decorator import retry_async
+
 
 class PolyScrapper:
     def __init__(self, address: str):
         self.address = address
 
-    def _create_request_data(self,offset: str, limit="50"):
+    @property
+    def _create_lead_request_data(self):
+        headers = {
+            'accept': 'application/json',
+            'origin': 'https://polymarket.com',
+            'user-agent': FakeUserAgent().random,
+        }
+        params =  {
+            'timePeriod': 'all',
+            'orderBy': 'PNL',
+            'limit': '1',
+            'offset': '0',
+            'user': self.address,
+            'category': 'overall',
+        }
+        return params, headers
+
+    def _create_pos_request_data(self, offset: str, limit="50"):
         params = {
             'user': self.address,
             'sizeThreshold': '.1',
@@ -25,11 +43,12 @@ class PolyScrapper:
         }
         return params, headers
 
+    @retry_async(attempts=3)
     async def get_account_positions(self):
         all_positions = []
         async with aiohttp.ClientSession() as session:
             for offset in range(0, 300, 50):
-                params, headers = self._create_request_data(offset=str(offset))
+                params, headers = self._create_pos_request_data(offset=str(offset))
                 async with session.get(
                     'https://data-api.polymarket.com/positions',
                     params=params,
@@ -55,15 +74,30 @@ class PolyScrapper:
                             "title": pos.get("title"),
                             "currentValue": pos.get("currentValue")
                         })
-
         return all_positions
+    
+    @retry_async(attempts=3)
+    async def check_leaderboard(self):
+        async with aiohttp.ClientSession() as session:
+            params, headers = self._create_lead_request_data 
+            response = await session.get(
+                'https://data-api.polymarket.com/v1/leaderboard',
+                params=params,
+                headers=headers
+            )
+            if response.status != 200:
+                        CustomPrint().error(f"⚠️ {response.status}")
+                        return None
+            
+            data = await response.json()
+            return data[0]
 
 
 async def main():
     wallet = '0xd289b54aa8849c5cc146899a4c56910e7ec2d0bc'
     ins = PolyScrapper(wallet)
-    pos = await ins.get_account_positions()
-    pprint(pos)
+    pos = await ins.check_leaderboard()
+    print(pos)
 
 if __name__ == "__main__":
     asyncio.run(main())
