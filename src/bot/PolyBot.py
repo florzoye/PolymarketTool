@@ -25,6 +25,10 @@ class RegisterState(StatesGroup):
     waiting_for_address = State()
     reset_address = State()
 
+class TrackSettings(StatesGroup):
+    waiting_for_count = State()
+    waiting_for_min_value = State()
+
 async def set_commands(bot: Bot):
     commands = [
         BotCommand(command="start", description="Начать работу / регистрация"),
@@ -35,6 +39,7 @@ async def set_commands(bot: Bot):
     ]
     await bot.set_my_commands(commands)
 
+# -----------------  COMMANDS ----------------- 
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message, state: FSMContext):
     tg_id = message.from_user.id
@@ -131,6 +136,7 @@ async def cmd_copy_trade(message: types.Message):
     )
     await message.answer('Меню copy-trade на Polymarket!', reply_markup=kb)
 
+# ----------------- STATE ----------------- 
 @dp.message(RegisterState.waiting_for_address)
 async def get_address(message: types.Message, state: FSMContext):
     address = message.text.strip()
@@ -165,6 +171,60 @@ async def reset_address(message: types.Message, state: FSMContext):
     await state.clear()
     await message.answer(f"Адрес `{address}` сохранён.", parse_mode="Markdown")
 
+@dp.message(TrackSettings.waiting_for_count)
+async def get_deal_count(message: types.Message, state: FSMContext):
+    try:
+        count = int(message.text)
+        if count <= 0 or count > 50:
+            raise ValueError
+    except ValueError:
+        await message.answer("⚠️ Введите число от 1 до 50.")
+        return
+
+    await state.update_data(count=count)
+
+    back_kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="⬅️ Назад", callback_data="copy_trade_back")]
+        ]
+    )
+
+    await message.edit_text(
+        "Теперь введите минимальную маржу сделки (например, 20.5)",
+        reply_markup=back_kb
+    )
+    await state.set_state(TrackSettings.waiting_for_min_value)
+
+
+@dp.message(TrackSettings.waiting_for_min_value)
+async def get_min_value(message: types.Message, state: FSMContext):
+    try:
+        min_value = float(message.text)
+        if min_value < 0:
+            raise ValueError
+    except ValueError:
+        await message.answer("⚠️ Введите корректное число (например, 10.0)")
+        return
+
+    user_data = await state.get_data()
+    count = user_data["count"]
+    await state.clear()
+
+    text = (
+        f"✅ Настройки применены!\n\n"
+        f"Показываю до **{count}** сделок с минимальным value ≥ **{min_value}$**.\n"
+        f"(тут будет твоя логика выборки 🔧)"
+    )
+
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="⬅️ Назад", callback_data="copy_trade_back")]
+        ]
+    )
+
+    await message.answer(text, parse_mode="Markdown", reply_markup=kb)
+
+# -----------------  CALLBACK ----------------- 
 @dp.callback_query(F.data == "track_wallets")
 async def wallets_in_track(callback: CallbackQuery):
     tg_id = callback.from_user.id
@@ -174,6 +234,7 @@ async def wallets_in_track(callback: CallbackQuery):
         inline_keyboard=[
             [InlineKeyboardButton(text='Добавить новый кошелек', callback_data='add_new_track_wallet')],
             [InlineKeyboardButton(text='Удалить кошелек на треке', callback_data='delete_track_wallet')],
+            [InlineKeyboardButton(text="⬅️ Назад", callback_data="copy_trade_back")]
         ]
     )
 
@@ -196,12 +257,56 @@ async def wallets_in_track(callback: CallbackQuery):
             f"**{i}. {lead_data['username']} (`{address}`)**\n"
             f"🏆 Rank: {lead_data['rank']}\n"
             f"💸 PnL: `${lead_data['pnl']}`\n"
-            f"📊 Value: `${value}`\n"
+            f"📊 Value: `${value}`\n"   
             f"───────────────────────\n"
         )
 
     await callback.message.edit_text(text, parse_mode="Markdown", reply_markup=kb)
     await callback.answer()
+
+@dp.callback_query(F.data == "track_positions")
+async def positions_wallets(callback: CallbackQuery, state: FSMContext):
+    tg_id = callback.from_user.id
+    track_addresses = await users_sql.get_track_wallets(tg_id)
+
+    back_kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="⬅️ Назад", callback_data="copy_trade_back")]
+        ]
+    )
+
+    if not track_addresses:
+        await callback.message.edit_text(
+            "К вашему аккаунту не привязаны кошельки для трейкинга.\n"
+            "Привяжите их и запустите заново.",
+            reply_markup=back_kb
+        )
+        await callback.answer()
+        return
+
+    await callback.message.edit_text(
+        "Сколько последних сделок показать? (например, 5)",
+        reply_markup=back_kb
+    )
+    await state.set_state(TrackSettings.waiting_for_count)
+    await callback.answer()
+
+
+@dp.callback_query(F.data == "copy_trade_back")
+async def copy_trade_back(callback: CallbackQuery, state: FSMContext):
+    await state.clear()
+
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text='Кошельки на треке', callback_data='track_wallets')],
+            [InlineKeyboardButton(text='Позиции кошельков на треке', callback_data='track_positions')],
+            [InlineKeyboardButton(text='Запустить copy-trade для конкретных кошельков', callback_data='start_copy_trade')]
+        ]
+    )
+
+    await callback.message.edit_text("Меню copy-trade на Polymarket!", reply_markup=kb)
+    await callback.answer()
+
 
 async def main():
     try:

@@ -160,7 +160,8 @@ class PolyScrapper:
 async def main():
     wallet = '0xd289b54aa8849c5cc146899a4c56910e7ec2d0bc'
     ins = PolyScrapper(wallet)
-    pos = await ins.get_value_user()
-    print(pos)
+    pos = await ins.get_account_positions()
+    from pprint import pprint
+    pprint(pos)
 if __name__ == "__main__":
     asyncio.run(main())
