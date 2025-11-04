@@ -2,7 +2,7 @@ def create_users_table_sql() -> str:
     return """
     CREATE TABLE IF NOT EXISTS users (
         tg_id INTEGER  PRIMARY KEY,
-        address TEXT,
+        address TEXT
     )
     """
 
