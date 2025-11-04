@@ -12,6 +12,7 @@ from data import config
 class PolyScrapper:
     def __init__(self, address: str):
         self.address = address
+        self.base_url = "https://data-api.polymarket.com/"
 
     @property
     def _create_lead_request_data(self):
@@ -70,7 +71,7 @@ class PolyScrapper:
             for offset in range(0, 300, 50):
                 params, headers = self._create_pos_request_data(offset=str(offset))
                 async with session.get(
-                    'https://data-api.polymarket.com/positions',
+                    f'{self.base_url}positions',
                     params=params,
                     headers=headers
                 ) as response:
@@ -102,7 +103,7 @@ class PolyScrapper:
             params, headers = self._create_activity_request_data
             while True:
                 async with session.get(
-                    'https://data-api.polymarket.com/activity',
+                    f'{self.base_url}activity',
                     params=params,
                     headers=headers
                 ) as response:
@@ -131,21 +132,35 @@ class PolyScrapper:
         async with aiohttp.ClientSession() as session:
             params, headers = self._create_lead_request_data 
             response = await session.get(
-                'https://data-api.polymarket.com/v1/leaderboard',
+                f'{self.base_url}v1/leaderboard',
                 params=params,
                 headers=headers
             )
             if response.status != 200:
                         CustomPrint().error(f"⚠️ {response.status}")
                         return None
-            
-            data = await response.json()
-            return data[0]
+            return (await response.json())[0]
+        
+    @retry_async(attempts=3)
+    async def get_value_user(self):
+        async with aiohttp.ClientSession() as session:
+            _, headers = self._create_activity_request_data
+            params = {'user': self.address}
+
+            response = await session.get(
+                f'{self.base_url}value',
+                params=params,
+                headers=headers
+            )
+            if response.status != 200:
+                    CustomPrint().error(f"⚠️ {response.status}")
+                    return None
+            return round((await response.json())[0]['value'], 3)
 
 async def main():
     wallet = '0xd289b54aa8849c5cc146899a4c56910e7ec2d0bc'
     ins = PolyScrapper(wallet)
-    pos = await ins.check_leaderboard()
+    pos = await ins.get_value_user()
     print(pos)
 if __name__ == "__main__":
     asyncio.run(main())
