@@ -1,10 +1,12 @@
 import asyncio
 
-from aiogram import Bot, Dispatcher, types
-from aiogram.types import BotCommand
+from aiogram import F
 from aiogram.filters import Command
-from aiogram.fsm.state import StatesGroup, State
+from aiogram.types import BotCommand, CallbackQuery
+from aiogram import Bot, Dispatcher, types
 from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import StatesGroup, State
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 from db.users import UsersSQL
 from db.manager import AsyncDatabaseManager
@@ -28,7 +30,7 @@ async def set_commands(bot: Bot):
         BotCommand(command="start", description="Начать работу / регистрация"),
         BotCommand(command="positions", description="Показать все активные позиции"),
         BotCommand(command="leaderboard", description="Позиция в рейтинге"),
-        BotCommand(command="copy_trade", description="Отслеживать новые сделки"),
+        BotCommand(command="copy_trade", description="Отслеживать и повторять новые сделки кошельков"),
         BotCommand(command="reset_address", description="Заменить ваш основной кошелек"),
     ]
     await bot.set_my_commands(commands)
@@ -118,6 +120,17 @@ async def cmd_reset_address(message: types.Message, state: FSMContext):
     )
     await state.set_state(RegisterState.reset_address)
 
+@dp.message(Command('copy_trade'))
+async def cmd_copy_trade(message: types.Message):
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text='Кошельки на треке', callback_data='track_wallets')],
+            [InlineKeyboardButton(text='Позиции кошельков на треке', callback_data='track_positions')],
+            [InlineKeyboardButton(text='Запустить copy-trade для конкретных кошельков', callback_data='start_copy_trade')]
+        ]
+    )
+    await message.answer('Меню copy-trade на Polymarket!', reply_markup=kb)
+
 @dp.message(RegisterState.waiting_for_address)
 async def get_address(message: types.Message, state: FSMContext):
     address = message.text.strip()
@@ -152,6 +165,43 @@ async def reset_address(message: types.Message, state: FSMContext):
     await state.clear()
     await message.answer(f"Адрес `{address}` сохранён.", parse_mode="Markdown")
 
+@dp.callback_query(F.data == "track_wallets")
+async def wallets_in_track(callback: CallbackQuery):
+    tg_id = callback.from_user.id
+    track_addresses = await users_sql.get_track_wallets(tg_id)
+
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text='Добавить новый кошелек', callback_data='add_new_track_wallet')],
+            [InlineKeyboardButton(text='Удалить кошелек на треке', callback_data='delete_track_wallet')],
+        ]
+    )
+
+    if not track_addresses:
+        await callback.message.edit_text(
+            "К вашему аккаунту не привязаны кошельки для трейкинга.\n"
+            "Привяжите их и запустите заново.",
+            reply_markup=kb
+        )
+        await callback.answer()
+        return
+
+    text = f"**У вас {len(track_addresses)} кошельков на треке, вот их показатели:**\n\n"
+    for i, address in enumerate(track_addresses, 1):
+        scrapper = PolyScrapper(address)
+        lead_data = await scrapper.check_leaderboard()
+        value = await scrapper.get_value_user()
+
+        text += (
+            f"**{i}. {lead_data['username']} (`{address}`)**\n"
+            f"🏆 Rank: {lead_data['rank']}\n"
+            f"💸 PnL: `${lead_data['pnl']}`\n"
+            f"📊 Value: `${value}`\n"
+            f"───────────────────────\n"
+        )
+
+    await callback.message.edit_text(text, parse_mode="Markdown", reply_markup=kb)
+    await callback.answer()
 
 async def main():
     try:
