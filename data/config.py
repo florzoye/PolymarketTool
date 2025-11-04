@@ -7,3 +7,4 @@ if os.path.exists(dotenv_path):
 
 BOT_TOKEN = os.getenv('BOT_TOKEN')
 ATTEMPS = 3
+DELAY = 15
