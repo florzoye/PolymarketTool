@@ -16,6 +16,9 @@ def insert_users_sql(table_name: str) -> str:
     )
     """
 
+def update_address() -> str:
+    return "UPDATE users SET address = :address WHERE tg_id = :tg_id"
+
 def select_all_sql(table_name: str) -> str:
     return f"SELECT * FROM {table_name}"
 

@@ -6,6 +6,7 @@ from db.schemas import (
     select_all_sql,
     select_user_address_sql,
     clear_table_sql,
+    update_address
 )
 from utils.customprint import CustomPrint
 
@@ -28,6 +29,13 @@ class UsersSQL:
             CustomPrint().success(f"👤 Пользователь {user.get('tg_id')} добавлен")
         except Exception as e:
             CustomPrint().error(f"Ошибка добавления пользователя {user.get('tg_id')}: {e}")
+
+    async def update_user_address(self, tg_id: int, new_address: str):
+        try:
+            await self.db.execute(update_address(), {"tg_id": tg_id, "address": new_address})
+            CustomPrint().success(f"Адрес пользователя {tg_id} обновлен на {new_address}")
+        except Exception as e:
+            CustomPrint().error(f"Ошибка при обновлении адреса пользователя {tg_id}: {e}")
 
     async def get_all_data(self) -> List[Dict]:
         return await self.db.fetchall(select_all_sql("users"))

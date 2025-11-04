@@ -1,13 +1,10 @@
-import sys
 import asyncio
-from rich.table import Table
 
 from aiogram import Bot, Dispatcher, types
 from aiogram.types import BotCommand
 from aiogram.filters import Command
 from aiogram.fsm.state import StatesGroup, State
 from aiogram.fsm.context import FSMContext
-from aiogram.fsm.storage.memory import MemoryStorage
 
 from db.users import UsersSQL
 from db.manager import AsyncDatabaseManager
@@ -15,15 +12,16 @@ from db.manager import AsyncDatabaseManager
 from src.core.PolyScrapper import PolyScrapper
 from data.config import BOT_TOKEN
 
+dp = Dispatcher()
 bot = Bot(BOT_TOKEN)
-storage = MemoryStorage() 
-dp = Dispatcher(storage=storage)
+
 db = AsyncDatabaseManager('users.db')
 users_sql = UsersSQL(db)
 
 
 class RegisterState(StatesGroup):
     waiting_for_address = State()
+    reset_address = State()
 
 async def set_commands(bot: Bot):
     commands = [
@@ -43,7 +41,7 @@ async def cmd_start(message: types.Message, state: FSMContext):
     if address is None:
         await message.answer(
             "👋 Привет! Твоего Polymarket адреса нет в базе.\n"
-            "Пожалуйста, отправь его сюда (например: `0x1234...abcd`):",
+            "Пожалуйста, отправь его сюда:",
             parse_mode="Markdown"
         )
         await state.set_state(RegisterState.waiting_for_address)
@@ -85,7 +83,6 @@ async def cmd_pos(message: types.Message):
             f"📈 PnL: `${pnl}` ({percent}%)\n"
             f"───────────────────────\n"
         )
-
     await message.answer(text, parse_mode="Markdown")
 
 @dp.message(Command('leaderboard'))
@@ -107,6 +104,20 @@ async def cmd_leaderboard(message: types.Message):
     )
     await message.answer(text, parse_mode="Markdown")
 
+@dp.message(Command('reset_address'))
+async def cmd_reset_address(message: types.Message, state: FSMContext):
+    tg_id = message.from_user.id
+    address = await users_sql.select_user_address(tg_id)
+    if not address:
+        await message.answer("❌ Адрес не найден. Сначала введите его через /start.")
+        return
+    
+    await message.answer(
+        f'Сейчас ваш адресс - {address}\n'
+        f'Если желаете поменять, пришлите новый в чат.'
+    )
+    await state.set_state(RegisterState.reset_address)
+
 @dp.message(RegisterState.waiting_for_address)
 async def get_address(message: types.Message, state: FSMContext):
     address = message.text.strip()
@@ -123,6 +134,24 @@ async def get_address(message: types.Message, state: FSMContext):
 
     await state.clear()
     await message.answer(f"Адрес `{address}` сохранён.", parse_mode="Markdown")
+
+@dp.message(RegisterState.reset_address)
+async def reset_address(message: types.Message, state: FSMContext):
+    address = message.text.strip()
+    tg_id = message.from_user.id
+
+    if not address.startswith("0x") or len(address) != 42:
+        await message.answer("⚠️ Это невалидный Ethereum/Polymarket адрес. Попробуй снова.")
+        return
+
+    await users_sql.update_user_address(
+        tg_id=tg_id,
+        new_address=address
+    )
+
+    await state.clear()
+    await message.answer(f"Адрес `{address}` сохранён.", parse_mode="Markdown")
+
 
 async def main():
     try:
