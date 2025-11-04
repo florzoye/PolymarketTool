@@ -64,6 +64,7 @@ class PolyScrapper:
     
     @retry_async(attempts=3)
     async def get_account_positions(self) -> List:
+        """-1 значит самая крайняя"""
         all_positions = []
         async with aiohttp.ClientSession() as session:
             for offset in range(0, 300, 50):
@@ -126,7 +127,7 @@ class PolyScrapper:
                 await asyncio.sleep(config.DELAY)
 
     @retry_async(attempts=3)
-    async def check_leaderboard(self) -> List:
+    async def check_leaderboard(self) -> dict:
         async with aiohttp.ClientSession() as session:
             params, headers = self._create_lead_request_data 
             response = await session.get(
@@ -144,8 +145,7 @@ class PolyScrapper:
 async def main():
     wallet = '0xd289b54aa8849c5cc146899a4c56910e7ec2d0bc'
     ins = PolyScrapper(wallet)
-    pos = await ins.get_account_positions()
-    print(pos[-1])
-
+    pos = await ins.check_leaderboard()
+    print(pos)
 if __name__ == "__main__":
     asyncio.run(main())
