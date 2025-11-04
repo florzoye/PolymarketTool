@@ -17,7 +17,6 @@ from data.config import BOT_TOKEN
 
 logging.basicConfig(level=logging.INFO)
 
-# Инициализация бота и диспетчера
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
