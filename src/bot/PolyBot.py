@@ -20,7 +20,6 @@ logging.basicConfig(level=logging.INFO)
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
-# БД
 db = AsyncDatabaseManager('users.db')
 users_sql = UsersSQL(db)
 
@@ -287,29 +286,39 @@ async def get_min_value(message: types.Message, state: FSMContext):
         f"✅ Настройки применены!\n\n"
         f"Показываю до **{count}** сделок с минимальным value ≥ **{min_value}$**.\n\n"
     )
+
     track_addresses = await users_sql.get_track_wallets(message.from_user.id)
 
     for address in track_addresses:
         scrapper = PolyScrapper(address)
-        positions = await scrapper.get_account_positions() or []
-        positions = positions[-1:-count-1:-1] # 12321 
+        leaderboard_data = await scrapper.check_leaderboard()
+        name = leaderboard_data.get("userName", "Неизвестный")
 
-        lead = await scrapper.check_leaderboard()
-        name = lead.get('userName') 
+        positions = await scrapper.get_account_positions(sortBy="CURRENT") or []
+
+        # 1️⃣ фильтруем по условиям
+        filtered_positions = []
+        for pos in positions:
+            size = float(pos.get("size") or 0)
+            percent = float(pos.get("percentRealizedPnl") or 0)
+            if size >= min_value and percent > -90:
+                filtered_positions.append(pos)
+
+        # 2️⃣ берем ровно нужное количество (если есть)
+        filtered_positions = filtered_positions[:count]
+
+        if not filtered_positions:
+            text += f"❌ Нет позиций, соответствующих условиям для {name} (`{address}`).\n\n"
+            continue
 
         text += f'Позиции {name} (`{address}`):\n'
-        for j, pos in enumerate(positions, 1):
-            try:
-                size = float(pos.get('size', 0) or 0)
-            except (TypeError, ValueError):
-                size = 0
-            if size <= min_value:
-                continue
 
+        for j, pos in enumerate(filtered_positions, 1):
             title = pos.get("title", "Без названия")
-            current = round(float(pos.get("currentValue", 0)), 2)
-            pnl = round(float(pos.get("cashPnl", 0)), 2)
-            percent = round(float(pos.get("percentRealizedPnl", 0) or 0), 2)
+            current = round(float(pos.get("currentValue") or 0), 2)
+            pnl = round(float(pos.get("cashPnl") or 0), 2)
+            percent = round(float(pos.get("percentRealizedPnl") or 0), 2)
+
             text += (
                 f"**{j}. {title}**\n"
                 f"💰 Текущая стоимость: `${current}`\n"
@@ -360,6 +369,7 @@ async def check_day_lead(callback: CallbackQuery):
     await callback.message.edit_text(text, parse_mode="Markdown", reply_markup=kb)
     await callback.answer()
 
+
 @dp.callback_query(F.data == "day_lead")
 async def check_day_lead(callback: CallbackQuery):
     tg_id = callback.from_user.id
@@ -393,6 +403,7 @@ async def check_day_lead(callback: CallbackQuery):
     await callback.message.edit_text(text, parse_mode="Markdown", reply_markup=kb)
     await callback.answer()
 
+
 @dp.callback_query(F.data == "track_wallets")
 async def wallets_in_track(callback: CallbackQuery):
     tg_id = callback.from_user.id
@@ -421,7 +432,6 @@ async def wallets_in_track(callback: CallbackQuery):
         lead_data = await scrapper.check_leaderboard()
         value = await scrapper.get_value_user()
 
-        # безопасный доступ к полям
         name = lead_data.get('userName', 'Unknown') if isinstance(lead_data, dict) else str(lead_data)
         rank = lead_data.get('rank', '—') if isinstance(lead_data, dict) else '—'
         pnl = lead_data.get('pnl', 0) if isinstance(lead_data, dict) else 0
@@ -453,7 +463,6 @@ async def add_new_track_wallet(callback: CallbackQuery, state: FSMContext):
     )
     await state.set_state(TrackSettings.waiting_for_new_wallet)
     await callback.answer()
-
 
 @dp.callback_query(F.data == "delete_track_wallet")
 async def delete_track_wallet(callback: CallbackQuery, state: FSMContext):
