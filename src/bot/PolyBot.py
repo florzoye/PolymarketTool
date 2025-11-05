@@ -1,5 +1,6 @@
 import asyncio
 import logging
+from itertools import islice
 
 from aiogram import F
 from aiogram.filters import Command
@@ -13,6 +14,7 @@ from db.manager import AsyncDatabaseManager
 from src.bot.states import TrackSettings, RegisterState
 
 from src.core.PolyScrapper import PolyScrapper
+from utils.formatters import format_money, format_pnl
 from data.config import BOT_TOKEN
 
 logging.basicConfig(level=logging.INFO)
@@ -283,7 +285,7 @@ async def get_min_value(message: types.Message, state: FSMContext):
     await state.clear()
 
     text = (
-        f"✅ Настройки применены!\n\n"
+        f"✅ **Настройки применены!**\n\n"
         f"Показываю до **{count}** сделок с минимальным value ≥ **{min_value}$**.\n\n"
     )
 
@@ -296,42 +298,45 @@ async def get_min_value(message: types.Message, state: FSMContext):
 
         positions = await scrapper.get_account_positions(sortBy="CURRENT") or []
 
-        # 1️⃣ фильтруем по условиям
-        filtered_positions = []
-        for pos in positions:
-            size = float(pos.get("size") or 0)
-            percent = float(pos.get("percentRealizedPnl") or 0)
-            if size >= min_value and percent > -90:
-                filtered_positions.append(pos)
+        # фильтруем и берём только нужное количество
+        filtered_positions = list(islice(
+            (
+                p for p in positions
+                if float(p.get("currentValue") or 0) >= min_value
+                and float(p.get("percentRealizedPnl") or 0) > -90
+            ),
+            count
+        ))
 
-        # 2️⃣ берем ровно нужное количество (если есть)
-        filtered_positions = filtered_positions[:count]
+        # ── формируем текст ──
+        text += (
+            "━━━━━━━━━━━━━━━━━━━\n"
+            f"👤 **{name}**\n"
+            f"`{address}`\n\n"
+        )
 
         if not filtered_positions:
-            text += f"❌ Нет позиций, соответствующих условиям для {name} (`{address}`).\n\n"
+            text += "❌ Нет подходящих позиций.\n\n"
             continue
-
-        text += f'Позиции {name} (`{address}`):\n'
 
         for j, pos in enumerate(filtered_positions, 1):
             title = pos.get("title", "Без названия")
-            current = round(float(pos.get("currentValue") or 0), 2)
-            pnl = round(float(pos.get("cashPnl") or 0), 2)
-            percent = round(float(pos.get("percentRealizedPnl") or 0), 2)
+            current = float(pos.get("currentValue") or 0)
+            pnl = float(pos.get("cashPnl") or 0)
+            percent = float(pos.get("percentRealizedPnl") or 0)
 
             text += (
-                f"**{j}. {title}**\n"
-                f"💰 Текущая стоимость: `${current}`\n"
-                f"📈 PnL: `${pnl}` ({percent}%)\n"
-                f"───────────────────────\n"
+                f"{j}️⃣ **{title}**\n"
+                f"💰 {format_money(current)} {format_pnl(pnl, percent)}\n\n"
             )
+
+        text += "━━━━━━━━━━━━━━━━━━━\n"
 
     kb = InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="⬅️ Назад", callback_data="copy_trade_back")]
         ]
     )
-
     await message.answer(text, parse_mode="Markdown", reply_markup=kb)
 
 
