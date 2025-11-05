@@ -100,6 +100,12 @@ async def cmd_leaderboard(message: types.Message):
         await message.answer("❌ Адрес не найден. Сначала введите его через /start.")
         return
     
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text='Дневной', callback_data='day_lead')],
+            [InlineKeyboardButton(text='Недельный', callback_data='week_lead')],
+        ]
+    )
     scrapper = PolyScrapper(address)
     lead = await scrapper.check_leaderboard()
 
@@ -112,9 +118,10 @@ async def cmd_leaderboard(message: types.Message):
         f"**Данные по вашему аккаунту - {userName}**\n"
         f"🏆 Место в топе: {rank}\n"
         f"👛 Обьем за все время: {round(vol, 3)}\n"
-        f"💸 Реализованный PnL: {round(pnl, 3)}"
+        f"💸 Реализованный PnL за все время: {round(pnl, 3)}\n"
+        f"**Обновить информацию за конкретный период?**"
     )
-    await message.answer(text, parse_mode="Markdown")
+    await message.answer(text, parse_mode="Markdown", reply_markup=kb)
 
 
 @dp.message(Command('reset_address'))
@@ -255,7 +262,6 @@ async def get_deal_count(message: types.Message, state: FSMContext):
         ]
     )
 
-    # Используем message.answer, т.к. это ответ на сообщение пользователя
     await message.answer(
         "Теперь введите минимальную маржу сделки (например, 20.5)",
         reply_markup=back_kb
@@ -286,7 +292,7 @@ async def get_min_value(message: types.Message, state: FSMContext):
     for address in track_addresses:
         scrapper = PolyScrapper(address)
         positions = await scrapper.get_account_positions() or []
-        positions = positions[-count:]
+        positions = positions[-1:-count-1:-1] # 12321 
 
         lead = await scrapper.check_leaderboard()
         name = lead.get('userName') 
@@ -321,6 +327,72 @@ async def get_min_value(message: types.Message, state: FSMContext):
 
 
 # ----------------- CALLBACK -----------------
+@dp.callback_query(F.data == "week_lead")
+async def check_day_lead(callback: CallbackQuery):
+    tg_id = callback.from_user.id
+    address = await users_sql.select_user_address(tg_id)
+
+    if not address:
+        await callback.answer("❌ Адрес не найден. Сначала введите его через /start.")
+        return
+    
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text='Дневной', callback_data='day_lead')],
+            [InlineKeyboardButton(text='Недельный', callback_data='week_lead')],
+        ]
+    )
+    scrapper = PolyScrapper(address)
+    lead = await scrapper.check_leaderboard(timePeriod='week')
+
+    userName = lead.get('userName', 'Unknown')
+    rank = lead.get('rank', '—')
+    vol = lead.get('vol', 0)
+    pnl = lead.get('pnl', 0)
+
+    text = (
+        f"**Данные по вашему аккаунту - {userName}**\n"
+        f"🏆 Место в топе: {rank}\n"
+        f"👛 Обьем за эту неделю: {round(vol, 3)}\n"
+        f"💸 Реализованный PnL за эту неделю: {round(pnl, 3)}\n"
+        f"**Обновить информацию за конкретный период?**"
+    )
+    await callback.message.edit_text(text, parse_mode="Markdown", reply_markup=kb)
+    await callback.answer()
+
+@dp.callback_query(F.data == "day_lead")
+async def check_day_lead(callback: CallbackQuery):
+    tg_id = callback.from_user.id
+    address = await users_sql.select_user_address(tg_id)
+
+    if not address:
+        await callback.answer("❌ Адрес не найден. Сначала введите его через /start.")
+        return
+    
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text='Дневной', callback_data='day_lead')],
+            [InlineKeyboardButton(text='Недельный', callback_data='week_lead')],
+        ]
+    )
+    scrapper = PolyScrapper(address)
+    lead = await scrapper.check_leaderboard(timePeriod='day')
+
+    userName = lead.get('userName', 'Unknown')
+    rank = lead.get('rank', '—')
+    vol = lead.get('vol', 0)
+    pnl = lead.get('pnl', 0)
+
+    text = (
+        f"**Данные по вашему аккаунту - {userName}**\n"
+        f"🏆 Место в топе: {rank}\n"
+        f"👛 Обьем за сегодня: {round(vol, 3)}\n"
+        f"💸 Реализованный PnL за сегодня: {round(pnl, 3)}\n"
+        f"**Обновить информацию за конкретный период?**"
+    )
+    await callback.message.edit_text(text, parse_mode="Markdown", reply_markup=kb)
+    await callback.answer()
+
 @dp.callback_query(F.data == "track_wallets")
 async def wallets_in_track(callback: CallbackQuery):
     tg_id = callback.from_user.id
