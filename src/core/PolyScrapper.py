@@ -15,23 +15,6 @@ class PolyScrapper:
         self.base_url = "https://data-api.polymarket.com/"
 
     @property
-    def _create_lead_request_data(self):
-        headers = {
-            'accept': 'application/json',
-            'origin': 'https://polymarket.com',
-            'user-agent': FakeUserAgent().random,
-        }
-        params =  {
-            'timePeriod': 'all',
-            'orderBy': 'PNL',
-            'limit': '1',
-            'offset': '0',
-            'user': self.address,
-            'category': 'overall',
-        }
-        return params, headers
-
-    @property
     def _create_activity_request_data(self):
         headers = {
             'accept': 'application/json',
@@ -44,6 +27,22 @@ class PolyScrapper:
             'offset': '0',
             'sortBy': 'TIMESTAMP',
             'sortDirection': 'DESC',
+        }
+        return params, headers
+
+    def _create_lead_request_data(self, timePeriod: str | None = 'all'):
+        headers = {
+            'accept': 'application/json',
+            'origin': 'https://polymarket.com',
+            'user-agent': FakeUserAgent().random,
+        }
+        params =  {
+            'timePeriod': timePeriod,
+            'orderBy': 'PNL',
+            'limit': '1',
+            'offset': '0',
+            'user': self.address,
+            'category': 'overall',
         }
         return params, headers
 
@@ -128,9 +127,9 @@ class PolyScrapper:
                 await asyncio.sleep(config.DELAY)
 
     @retry_async(attempts=3)
-    async def check_leaderboard(self) -> dict:
+    async def check_leaderboard(self, timePeriod: str | None = 'all') -> dict:
         async with aiohttp.ClientSession() as session:
-            params, headers = self._create_lead_request_data 
+            params, headers = self._create_lead_request_data(timePeriod=timePeriod)  # СДЕЛАТЬ ДНЕВНОЙ И НЕДЕЛЬНЫЙ
             response = await session.get(
                 f'{self.base_url}v1/leaderboard',
                 params=params,
@@ -160,7 +159,7 @@ class PolyScrapper:
 async def main():
     wallet = '0xd289b54aa8849c5cc146899a4c56910e7ec2d0bc'
     ins = PolyScrapper(wallet)
-    pos = await ins.get_account_positions()
+    pos = await ins.check_leaderboard()
     from pprint import pprint
     pprint(pos)
 if __name__ == "__main__":

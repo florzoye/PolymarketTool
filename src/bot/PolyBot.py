@@ -103,7 +103,6 @@ async def cmd_leaderboard(message: types.Message):
     scrapper = PolyScrapper(address)
     lead = await scrapper.check_leaderboard()
 
-    # check_leaderboard ожидается как dict: безопасный доступ
     userName = lead.get('userName', 'Unknown')
     rank = lead.get('rank', '—')
     vol = lead.get('vol', 0)
