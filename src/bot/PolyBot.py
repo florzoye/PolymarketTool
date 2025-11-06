@@ -4,9 +4,9 @@ from itertools import islice
 
 from aiogram import F
 from aiogram.filters import Command
-from aiogram.types import BotCommand, CallbackQuery
-from aiogram import Bot, Dispatcher, types
 from aiogram.fsm.context import FSMContext
+from aiogram import Bot, Dispatcher, types
+from aiogram.types import BotCommand, CallbackQuery
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 from db.users import UsersSQL
@@ -245,60 +245,156 @@ async def delete_track_wallet_handler(message: types.Message, state: FSMContext)
     )
 
 
-@dp.message(TrackSettings.waiting_for_count)
-async def get_deal_count(message: types.Message, state: FSMContext):
-    try:
-        count = int(message.text)
-        if count <= 0 or count > 10:
-            raise ValueError
-    except ValueError:
-        await message.answer("⚠️ Введите число от 1 до 10.")
-        return
 
-    await state.update_data(count=count)
+# ----------------- CALLBACK -----------------
 
-    back_kb = InlineKeyboardMarkup(
+@dp.callback_query(F.data == "change_count")
+async def change_count(callback: CallbackQuery, state: FSMContext):
+    kb = InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="⬅️ Назад", callback_data="copy_trade_back")]
+            [
+                InlineKeyboardButton(text="3", callback_data="set_count_3"),
+                InlineKeyboardButton(text="5", callback_data="set_count_5"),
+                InlineKeyboardButton(text="10", callback_data="set_count_10")
+            ],
+            [InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_track_settings")]
         ]
     )
-
-    await message.answer(
-        "Теперь введите минимальную маржу сделки (например, 20.5)",
-        reply_markup=back_kb
+    
+    await callback.message.edit_text(
+        "Выберите количество позиций для отображения:",
+        reply_markup=kb
     )
-    await state.set_state(TrackSettings.waiting_for_min_value)
+    await callback.answer()
 
 
-@dp.message(TrackSettings.waiting_for_min_value)
-async def get_min_value(message: types.Message, state: FSMContext):
-    try:
-        min_value = float(message.text)
-        if min_value < 0:
-            raise ValueError
-    except ValueError:
-        await message.answer("⚠️ Введите корректное число (например, 10.0)")
+@dp.callback_query(F.data.startswith("set_count_"))
+async def set_count(callback: CallbackQuery, state: FSMContext):
+    count = int(callback.data.split("_")[-1])
+    await state.update_data(count=count)
+    await show_track_settings_menu(callback.message, state)
+    await callback.answer(f"✅ Количество установлено: {count}")
+
+
+@dp.callback_query(F.data == "change_min_value")
+async def change_min_value(callback: CallbackQuery, state: FSMContext):
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="$1", callback_data="set_value_1"),
+                InlineKeyboardButton(text="$3", callback_data="set_value_3"),
+                InlineKeyboardButton(text="$5", callback_data="set_value_5")
+            ],
+            [
+                InlineKeyboardButton(text="$10", callback_data="set_value_10"),
+                InlineKeyboardButton(text="$20", callback_data="set_value_20"),
+                InlineKeyboardButton(text="$50", callback_data="set_value_50")
+            ],
+            [InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_track_settings")]
+        ]
+    )
+    
+    await callback.message.edit_text(
+        "Выберите минимальный value позиции:",
+        reply_markup=kb
+    )
+    await callback.answer()
+
+
+@dp.callback_query(F.data.startswith("set_value_"))
+async def set_min_value(callback: CallbackQuery, state: FSMContext):
+    value = float(callback.data.split("_")[-1])
+    await state.update_data(min_value=value)
+    await show_track_settings_menu(callback.message, state)
+    await callback.answer(f"✅ Минимальный value установлен: ${value}")
+
+
+@dp.callback_query(F.data == "change_sort")
+async def change_sort(callback: CallbackQuery, state: FSMContext):
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(
+                text="💰 По PnL",
+                callback_data="set_sort_CASHPNL"
+            )],
+            [InlineKeyboardButton(
+                text="🆕 Новые позиции",
+                callback_data="set_sort_INITIAL"
+            )],
+            [InlineKeyboardButton(
+                text="📊 По текущей стоимости",
+                callback_data="set_sort_CURRENT"
+            )],
+            [InlineKeyboardButton(
+                text="⬅️ Назад",
+                callback_data="back_to_track_settings"
+            )]
+        ]
+    )
+    
+    await callback.message.edit_text(
+        "Выберите тип сортировки позиций:",
+        reply_markup=kb
+    )
+    await callback.answer()
+
+
+@dp.callback_query(F.data.startswith("set_sort_"))
+async def set_sort(callback: CallbackQuery, state: FSMContext):
+    sort_by = callback.data.replace("set_sort_", "")
+    await state.update_data(sort_by=sort_by)
+    
+    sort_names = {
+        'CASHPNL': 'По PnL',
+        'INITIAL': 'Новые позиции',
+        'CURRENT': 'По текущей стоимости'
+    }
+    
+    await show_track_settings_menu(callback.message, state)
+    await callback.answer(f"✅ Сортировка: {sort_names.get(sort_by, sort_by)}")
+
+
+@dp.callback_query(F.data == "back_to_track_settings")
+async def back_to_track_settings(callback: CallbackQuery, state: FSMContext):
+    await show_track_settings_menu(callback.message, state)
+    await callback.answer()
+
+
+@dp.callback_query(F.data == "show_track_positions")
+async def show_track_positions(callback: CallbackQuery, state: FSMContext):
+    tg_id = callback.from_user.id
+    data = await state.get_data()
+    
+    count = data.get('count', 5)
+    min_value = data.get('min_value', 3.0)
+    sort_by = data.get('sort_by', 'CASHPNL')
+    
+    track_addresses = await users_sql.get_track_wallets(tg_id)
+    
+    if not track_addresses:
+        await callback.answer("❌ Нет кошельков на треке", show_alert=True)
         return
-
-    user_data = await state.get_data()
-    count = int(user_data.get("count", 5))
-    await state.clear()
-
+    
+    await callback.answer("⏳ Загружаю позиции...")
+    
+    sort_names = {
+        'CASHPNL': 'PnL',
+        'INITIAL': 'новым',
+        'CURRENT': 'стоимости'
+    }
+    
     text = (
-        f"✅ **Настройки применены!**\n\n"
-        f"Показываю до **{count}** сделок с минимальным value ≥ **{min_value}$**.\n\n"
+        f"📊 **Позиции кошельков на треке**\n"
+        f"(топ {count}, min ${min_value}, по {sort_names.get(sort_by, sort_by)})\n\n"
     )
-
-    track_addresses = await users_sql.get_track_wallets(message.from_user.id)
 
     for address in track_addresses:
         scrapper = PolyScrapper(address)
         leaderboard_data = await scrapper.check_leaderboard()
         name = leaderboard_data.get("userName", "Неизвестный")
 
-        positions = await scrapper.get_account_positions(sortBy="CURRENT") or []
+        positions = await scrapper.get_account_positions(sortBy=sort_by) or []
 
-        # фильтруем и берём только нужное количество
         filtered_positions = list(islice(
             (
                 p for p in positions
@@ -308,7 +404,6 @@ async def get_min_value(message: types.Message, state: FSMContext):
             count
         ))
 
-        # ── формируем текст ──
         text += (
             "━━━━━━━━━━━━━━━━━━━\n"
             f"👤 **{name}**\n"
@@ -327,20 +422,22 @@ async def get_min_value(message: types.Message, state: FSMContext):
 
             text += (
                 f"{j}️⃣ **{title}**\n"
-                f"💰 {format_money(current)} {format_pnl(pnl, percent)}\n\n"
+                f"💰 {format_money(current)} {format_pnl(pnl, percent)}\n\n"
             )
 
         text += "━━━━━━━━━━━━━━━━━━━\n"
 
     kb = InlineKeyboardMarkup(
         inline_keyboard=[
+            [InlineKeyboardButton(text="🔄 Обновить", callback_data="show_track_positions")],
+            [InlineKeyboardButton(text="⚙️ Настройки", callback_data="back_to_track_settings")],
             [InlineKeyboardButton(text="⬅️ Назад", callback_data="copy_trade_back")]
         ]
     )
-    await message.answer(text, parse_mode="Markdown", reply_markup=kb)
+    
+    await callback.message.edit_text(text, parse_mode="Markdown", reply_markup=kb)
 
 
-# ----------------- CALLBACK -----------------
 @dp.callback_query(F.data == "week_lead")
 async def check_day_lead(callback: CallbackQuery):
     tg_id = callback.from_user.id
@@ -469,6 +566,7 @@ async def add_new_track_wallet(callback: CallbackQuery, state: FSMContext):
     await state.set_state(TrackSettings.waiting_for_new_wallet)
     await callback.answer()
 
+
 @dp.callback_query(F.data == "delete_track_wallet")
 async def delete_track_wallet(callback: CallbackQuery, state: FSMContext):
     tg_id = callback.from_user.id
@@ -520,13 +618,14 @@ async def positions_wallets(callback: CallbackQuery, state: FSMContext):
         await callback.answer()
         return
 
-    await callback.message.edit_text(
-        "Сколько последних сделок показать? (например, 5)",
-        reply_markup=back_kb
+    await state.update_data(
+        count=5,
+        min_value=3.0,
+        sort_by='CASHPNL'
     )
-    await state.set_state(TrackSettings.waiting_for_count)
+    
+    await show_track_settings_menu(callback.message, state)
     await callback.answer()
-
 
 @dp.callback_query(F.data == "copy_trade_back")
 async def copy_trade_back(callback: CallbackQuery, state: FSMContext):
@@ -542,6 +641,55 @@ async def copy_trade_back(callback: CallbackQuery, state: FSMContext):
 
     await callback.message.edit_text("Меню copy-trade на Polymarket!", reply_markup=kb)
     await callback.answer()
+
+
+async def show_track_settings_menu(message, state: FSMContext):
+    """Показывает меню настроек отображения позиций"""
+    data = await state.get_data()
+    count = data.get('count', 5)
+    min_value = data.get('min_value', 3.0)
+    sort_by = data.get('sort_by', 'CASHPNL')
+    
+    sort_names = {
+        'CASHPNL': '💰 По PnL',
+        'INITIAL': '🆕 Новые позиции',
+        'CURRENT': '📊 По текущей стоимости'
+    }
+    
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(
+                text=f"📊 Количество: {count}",
+                callback_data="change_count"
+            )],
+            [InlineKeyboardButton(
+                text=f"💵 Мин. value: ${min_value}",
+                callback_data="change_min_value"
+            )],
+            [InlineKeyboardButton(
+                text=f"Сортировка: {sort_names.get(sort_by, sort_by)}",
+                callback_data="change_sort"
+            )],
+            [InlineKeyboardButton(
+                text="✅ Показать позиции",
+                callback_data="show_track_positions"
+            )],
+            [InlineKeyboardButton(
+                text="⬅️ Назад",
+                callback_data="copy_trade_back"
+            )]
+        ]
+    )
+    
+    text = (
+        "⚙️ **Настройки отображения позиций**\n\n"
+        f"📊 Количество позиций: **{count}**\n"
+        f"💵 Минимальный value: **${min_value}**\n"
+        f"🔄 Сортировка: **{sort_names.get(sort_by, sort_by)}**\n\n"
+        "Настройте параметры и нажмите \"Показать позиции\""
+    )
+    
+    await message.edit_text(text, parse_mode="Markdown", reply_markup=kb)
 
 
 async def main():

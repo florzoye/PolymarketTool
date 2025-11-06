@@ -5,7 +5,8 @@ class RegisterState(StatesGroup):
     reset_address = State()
 
 class TrackSettings(StatesGroup):
-    waiting_for_count = State()
-    waiting_for_min_value = State()
     waiting_for_new_wallet = State()
     waiting_for_delete_wallet = State()
+    waiting_for_count = State()
+    waiting_for_min_value = State()
+    configuring_display = State()
