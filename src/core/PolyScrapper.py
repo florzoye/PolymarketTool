@@ -71,9 +71,15 @@ class PolyScrapper:
     async def get_account_positions(
         self, 
         sortBy: str | None = 'CASHPNL', 
-        minValue: str | None = '.5'
     ) -> List:
-        """-1 значит самая крайняя"""
+        """
+        Фунция для поиска всех позиций и предсортировки в API
+
+        Args:
+            sortBy (str): default = CASHPNL, так же может быть INITIAL - новые,  CURRENT - самое большое колво валуе (маржа + пнл)
+        Returns:
+            positions (list): сырые позиции с начальными фильтрами
+        """
         all_positions = []
         async with aiohttp.ClientSession() as session:
             for offset in range(0, 300, 50):
@@ -141,7 +147,7 @@ class PolyScrapper:
     @retry_async(attempts=3)
     async def check_leaderboard(self, timePeriod: str | None = 'all') -> dict:
         async with aiohttp.ClientSession() as session:
-            params, headers = self._create_lead_request_data(timePeriod=timePeriod)  # СДЕЛАТЬ ДНЕВНОЙ И НЕДЕЛЬНЫЙ
+            params, headers = self._create_lead_request_data(timePeriod=timePeriod)   
             response = await session.get(
                 f'{self.base_url}v1/leaderboard',
                 params=params,

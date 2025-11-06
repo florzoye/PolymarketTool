@@ -51,7 +51,7 @@ async def cmd_start(message: types.Message, state: FSMContext):
         )
         await state.set_state(RegisterState.waiting_for_address)
     else:
-        await message.answer("Всё отлично, ты уже зарегистрирован!")
+        await message.answer("Всё отлично, ты уже зарегистрирован! Воспользуйся остальным функционалом через '/' !")
 
 
 @dp.message(Command("positions"))
@@ -439,7 +439,7 @@ async def show_track_positions(callback: CallbackQuery, state: FSMContext):
 
 
 @dp.callback_query(F.data == "week_lead")
-async def check_day_lead(callback: CallbackQuery):
+async def check_week_lead(callback: CallbackQuery):
     tg_id = callback.from_user.id
     address = await users_sql.select_user_address(tg_id)
 
