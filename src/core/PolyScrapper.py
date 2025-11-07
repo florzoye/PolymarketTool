@@ -115,7 +115,10 @@ class PolyScrapper:
         return all_positions
     
     @retry_async(attempts=3)
-    async def check_new_bets(self) -> Optional[dict]:
+    async def check_new_bets(self) -> Optional[dict]:  #TODO: сделать возращение моделью Position 
+        """
+        Мониторит ставки ТОЛЬКО НА ПОКУПКУ И НЕ СТАРШЕ 2 минут
+        """
         async with aiohttp.ClientSession() as session:
             params, headers = self._create_activity_request_data
             while True:
