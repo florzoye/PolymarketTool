@@ -6,6 +6,7 @@ from typing import List, Optional
 from fake_useragent import FakeUserAgent
 from utils.customprint import CustomPrint
 from utils.decorator import retry_async
+from src.models.position import Position
 
 from data import config
 
@@ -115,7 +116,7 @@ class PolyScrapper:
         return all_positions
     
     @retry_async(attempts=3)
-    async def check_new_bets(self) -> Optional[dict]:  #TODO: сделать возращение моделью Position 
+    async def check_new_bets(self) -> Position:  
         """
         Мониторит ставки ТОЛЬКО НА ПОКУПКУ И НЕ СТАРШЕ 2 минут
         """
@@ -143,7 +144,12 @@ class PolyScrapper:
 
                     if diff_minutes <= 2 and newest_bet.get('side') == "BUY":
                         CustomPrint().success(f'Новая ставка: {newest_bet}')
-                        return newest_bet
+                        return Position(
+                            slug=newest_bet.get('slug'),
+                            conditionId=newest_bet.get('conditionId'),
+                            outcome=newest_bet.get('outcome'),
+                            usdcSize=newest_bet.get('usdcSize')
+                        )
 
                 await asyncio.sleep(config.DELAY)
 
