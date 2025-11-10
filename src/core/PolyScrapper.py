@@ -15,8 +15,7 @@ class PolyScrapper:
         self.address = address
         self.base_url = "https://data-api.polymarket.com/"
 
-    @property
-    def _create_activity_request_data(self):
+    def _create_activity_request_data(self, limit: str = 10):
         headers = {
             'accept': 'application/json',
             'origin': 'https://polymarket.com',
@@ -24,7 +23,7 @@ class PolyScrapper:
         }
         params = {
             'user': self.address,
-            'limit': '10',
+            'limit': limit,
             'offset': '0',
             'sortBy': 'TIMESTAMP',
             'sortDirection': 'DESC',
@@ -68,6 +67,7 @@ class PolyScrapper:
         }
         return params, headers
     
+
     @retry_async(attempts=3)
     async def get_account_positions(
         self, 
@@ -115,13 +115,14 @@ class PolyScrapper:
                         })
         return all_positions
     
+
     @retry_async(attempts=3)
     async def check_new_bets(self) -> Position:  
         """
         Мониторит ставки ТОЛЬКО НА ПОКУПКУ И НЕ СТАРШЕ 2 минут
         """
         async with aiohttp.ClientSession() as session:
-            params, headers = self._create_activity_request_data
+            params, headers = self._create_activity_request_data()
             while True:
                 async with session.get(
                     f'{self.base_url}activity',
@@ -148,10 +149,49 @@ class PolyScrapper:
                             slug=newest_bet.get('slug'),
                             conditionId=newest_bet.get('conditionId'),
                             outcome=newest_bet.get('outcome'),
-                            usdcSize=newest_bet.get('usdcSize')
+                            usdcSize=newest_bet.get('usdcSize'),
+                            title=newest_bet.get('title'),
+                            price=newest_bet.get('price')
                         )
 
                 await asyncio.sleep(config.DELAY)
+
+
+    @retry_async(attempts=3)
+    async def get_last_bets(self) -> List[dict]:  
+        """
+        Мониторит ставки ТОЛЬКО НА ПОКУПКУ И НЕ СТАРШЕ 2 минут
+        """
+        async with aiohttp.ClientSession() as session:
+            params, headers = self._create_activity_request_data(limit='30')
+            while True:
+                async with session.get(
+                    f'{self.base_url}activity',
+                    params=params,
+                    headers=headers
+                ) as response:
+                    if response.status != 200:
+                        CustomPrint().error(f"⚠️ Ошибка {response.status}")
+                        return None
+                    
+                    data = await response.json()
+                    print(data)
+                    if not data:
+                        await asyncio.sleep(config.DELAY)
+                        return None
+
+                    return [
+                        Position(
+                            slug=pos.get('slug'),
+                            conditionId=pos.get('conditionId'),
+                            outcome=pos.get('outcome'),
+                            usdcSize=pos.get('usdcSize'),
+                            title=pos.get('title'),
+                            price=pos.get('price')
+                        ) 
+                        for pos in data 
+                    ]
+                        
 
     @retry_async(attempts=3)
     async def check_leaderboard(self, timePeriod: str | None = 'all') -> dict:
@@ -167,6 +207,7 @@ class PolyScrapper:
                         return None
             return (await response.json())[0]
         
+
     @retry_async(attempts=3)
     async def get_value_user(self):
         async with aiohttp.ClientSession() as session:
@@ -183,11 +224,13 @@ class PolyScrapper:
                     return None
             return round((await response.json())[0]['value'], 3)
 
+
 async def main():
     wallet = '0xd289b54aa8849c5cc146899a4c56910e7ec2d0bc'
     ins = PolyScrapper(wallet)
-    pos = await ins.check_leaderboard()
+    pos = await ins.get_last_bets()
     from pprint import pprint
-    pprint(pos)
+    pprint(len(pos))
+
 if __name__ == "__main__":
     asyncio.run(main())
