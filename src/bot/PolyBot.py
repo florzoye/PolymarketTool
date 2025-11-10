@@ -28,13 +28,22 @@ users_sql = UsersSQL(db)
 
 async def set_commands(bot: Bot):
     commands = [
-        BotCommand(command="start", description="Начать работу / регистрация"),
-        BotCommand(command="positions", description="Показать все активные позиции"),
-        BotCommand(command="leaderboard", description="Позиция в рейтинге"),
+        BotCommand(command="start", description="Главное меню"),
         BotCommand(command="copy_trade", description="Отслеживать и повторять новые сделки кошельков"),
-        BotCommand(command="reset_address", description="Заменить ваш основной кошелек"),
     ]
     await bot.set_my_commands(commands)
+
+
+def get_main_menu_keyboard():
+    """Создает главное меню с inline кнопками"""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text='📊 Мои позиции', callback_data='show_positions')],
+            [InlineKeyboardButton(text='🏆 Рейтинг', callback_data='show_leaderboard')],
+            [InlineKeyboardButton(text='🔄 Сменить кошелек', callback_data='reset_wallet')],
+            [InlineKeyboardButton(text='📋 Copy Trade', callback_data='copy_trade_menu')]
+        ]
+    )
 
 
 # -----------------  COMMANDS -----------------
@@ -51,93 +60,13 @@ async def cmd_start(message: types.Message, state: FSMContext):
         )
         await state.set_state(RegisterState.waiting_for_address)
     else:
-        await message.answer("Всё отлично, ты уже зарегистрирован! Воспользуйся остальным функционалом через '/' !")
-
-
-@dp.message(Command("positions"))
-async def cmd_pos(message: types.Message):
-    tg_id = message.from_user.id
-    address = await users_sql.select_user_address(tg_id)
-
-    if not address:
-        await message.answer("❌ Адрес не найден. Сначала введите его через /start.")
-        return
-
-    await message.answer("⏳ Получаю данные с Polymarket...")
-
-    scrapper = PolyScrapper(address)
-    positions = await scrapper.get_account_positions()
-
-    if not positions:
-        await message.answer("😕 Похоже, у тебя нет активных позиций на Polymarket.")
-        return
-
-    max_show = 10
-    positions = positions[:max_show]
-
-    text = f"📊 Топ {len(positions)} позиций по адресу `{address}`:\n\n"
-
-    for i, pos in enumerate(positions, 1):
-        title = pos.get("title", "Без названия")
-        current = round(float(pos.get("currentValue", 0)), 2)
-        pnl = round(float(pos.get("cashPnl", 0)), 2)
-        percent = round(float(pos.get("percentRealizedPnl", 0) or 0), 2)
-
-        text += (
-            f"**{i}. {title}**\n"
-            f"💰 Текущая стоимость: `${current}`\n"
-            f"📈 PnL: `${pnl}` ({percent}%)\n"
-            f"───────────────────────\n"
+        await message.answer(
+            f"✅ Добро пожаловать!\n\n"
+            f"Ваш адрес: `{address}`\n\n"
+            f"Выберите действие:",
+            parse_mode="Markdown",
+            reply_markup=get_main_menu_keyboard()
         )
-    await message.answer(text, parse_mode="Markdown")
-
-
-@dp.message(Command('leaderboard'))
-async def cmd_leaderboard(message: types.Message):
-    tg_id = message.from_user.id
-    address = await users_sql.select_user_address(tg_id)
-
-    if not address:
-        await message.answer("❌ Адрес не найден. Сначала введите его через /start.")
-        return
-    
-    kb = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text='Дневной', callback_data='day_lead')],
-            [InlineKeyboardButton(text='Недельный', callback_data='week_lead')],
-        ]
-    )
-    scrapper = PolyScrapper(address)
-    lead = await scrapper.check_leaderboard()
-
-    userName = lead.get('userName', 'Unknown')
-    rank = lead.get('rank', '—')
-    vol = lead.get('vol', 0)
-    pnl = lead.get('pnl', 0)
-
-    text = (
-        f"**Данные по вашему аккаунту - {userName}**\n"
-        f"🏆 Место в топе: {rank}\n"
-        f"👛 Обьем за все время: {round(vol, 3)}\n"
-        f"💸 Реализованный PnL за все время: {round(pnl, 3)}\n"
-        f"**Обновить информацию за конкретный период?**"
-    )
-    await message.answer(text, parse_mode="Markdown", reply_markup=kb)
-
-
-@dp.message(Command('reset_address'))
-async def cmd_reset_address(message: types.Message, state: FSMContext):
-    tg_id = message.from_user.id
-    address = await users_sql.select_user_address(tg_id)
-    if not address:
-        await message.answer("❌ Адрес не найден. Сначала введите его через /start.")
-        return
-    
-    await message.answer(
-        f'Сейчас ваш адресс - {address}\n'
-        f'Если желаете поменять, пришлите новый в чат.'
-    )
-    await state.set_state(RegisterState.reset_address)
 
 
 @dp.message(Command('copy_trade'))
@@ -146,7 +75,8 @@ async def cmd_copy_trade(message: types.Message):
         inline_keyboard=[
             [InlineKeyboardButton(text='Кошельки на треке', callback_data='track_wallets')],
             [InlineKeyboardButton(text='Позиции кошельков на треке', callback_data='track_positions')],
-            [InlineKeyboardButton(text='Запустить copy-trade для конкретных кошельков', callback_data='start_copy_trade')]
+            [InlineKeyboardButton(text='Запустить copy-trade для конкретных кошельков', callback_data='start_copy_trade')],
+            [InlineKeyboardButton(text='⬅️ Главное меню', callback_data='main_menu')]
         ]
     )
     await message.answer('Меню copy-trade на Polymarket!', reply_markup=kb)
@@ -168,7 +98,12 @@ async def get_address(message: types.Message, state: FSMContext):
     })
 
     await state.clear()
-    await message.answer(f"Адрес `{address}` сохранён.", parse_mode="Markdown")
+    await message.answer(
+        f"✅ Адрес `{address}` сохранён.\n\n"
+        f"Выберите действие:",
+        parse_mode="Markdown",
+        reply_markup=get_main_menu_keyboard()
+    )
 
 
 @dp.message(RegisterState.reset_address)
@@ -186,7 +121,12 @@ async def reset_address(message: types.Message, state: FSMContext):
     )
 
     await state.clear()
-    await message.answer(f"Адрес `{address}` сохранён.", parse_mode="Markdown")
+    await message.answer(
+        f"✅ Адрес `{address}` сохранён.\n\n"
+        f"Выберите действие:",
+        parse_mode="Markdown",
+        reply_markup=get_main_menu_keyboard()
+    )
 
 
 @dp.message(TrackSettings.waiting_for_new_wallet)
@@ -245,8 +185,238 @@ async def delete_track_wallet_handler(message: types.Message, state: FSMContext)
     )
 
 
+# ----------------- MAIN MENU CALLBACKS -----------------
 
-# ----------------- CALLBACK -----------------
+@dp.callback_query(F.data == "main_menu")
+async def show_main_menu(callback: CallbackQuery, state: FSMContext):
+    await state.clear()
+    tg_id = callback.from_user.id
+    address = await users_sql.select_user_address(tg_id)
+    
+    if not address:
+        await callback.message.edit_text(
+            "❌ Адрес не найден. Используйте /start для регистрации."
+        )
+        await callback.answer()
+        return
+    
+    await callback.message.edit_text(
+        f"✅ Главное меню\n"
+        f"Ваш адрес: `{address}`\n\n"
+        f"Выберите действие:",
+        parse_mode="Markdown",
+        reply_markup=get_main_menu_keyboard()
+    )
+    await callback.answer()
+
+
+@dp.callback_query(F.data == "show_positions")
+async def show_positions(callback: CallbackQuery):
+    tg_id = callback.from_user.id
+    address = await users_sql.select_user_address(tg_id)
+
+    if not address:
+        await callback.answer("❌ Адрес не найден. Сначала введите его через /start.", show_alert=True)
+        return
+
+    await callback.answer("⏳ Получаю данные с Polymarket...")
+
+    scrapper = PolyScrapper(address)
+    positions = await scrapper.get_account_positions()
+
+    if not positions:
+        kb = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text="⬅️ Главное меню", callback_data="main_menu")]
+            ]
+        )
+        await callback.message.edit_text(
+            "😕 Похоже, у тебя нет активных позиций на Polymarket.",
+            reply_markup=kb
+        )
+        return
+
+    max_show = 10
+    positions = positions[:max_show]
+
+    text = f"📊 Топ {len(positions)} позиций по адресу `{address}`:\n\n"
+
+    for i, pos in enumerate(positions, 1):
+        title = pos.get("title", "Без названия")
+        current = round(float(pos.get("currentValue", 0)), 2)
+        pnl = round(float(pos.get("cashPnl", 0)), 2)
+        percent = round(float(pos.get("percentRealizedPnl", 0) or 0), 2)
+
+        text += (
+            f"**{i}. {title}**\n"
+            f"💰 Текущая стоимость: `${current}`\n"
+            f"📈 PnL: `${pnl}` ({percent}%)\n"
+            f"───────────────────────\n"
+        )
+    
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="🔄 Обновить", callback_data="show_positions")],
+            [InlineKeyboardButton(text="⬅️ Главное меню", callback_data="main_menu")]
+        ]
+    )
+    
+    await callback.message.edit_text(text, parse_mode="Markdown", reply_markup=kb)
+
+
+@dp.callback_query(F.data == "show_leaderboard")
+async def show_leaderboard(callback: CallbackQuery):
+    tg_id = callback.from_user.id
+    address = await users_sql.select_user_address(tg_id)
+
+    if not address:
+        await callback.answer("❌ Адрес не найден. Сначала введите его через /start.", show_alert=True)
+        return
+    
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text='Дневной', callback_data='day_lead')],
+            [InlineKeyboardButton(text='Недельный', callback_data='week_lead')],
+            [InlineKeyboardButton(text='⬅️ Главное меню', callback_data='main_menu')]
+        ]
+    )
+    
+    await callback.answer("⏳ Загружаю данные...")
+    
+    scrapper = PolyScrapper(address)
+    lead = await scrapper.check_leaderboard()
+
+    userName = lead.get('userName', 'Unknown')
+    rank = lead.get('rank', '—')
+    vol = lead.get('vol', 0)
+    pnl = lead.get('pnl', 0)
+
+    text = (
+        f"**Данные по вашему аккаунту - {userName}**\n"
+        f"🏆 Место в топе: {rank}\n"
+        f"👛 Обьем за все время: {round(vol, 3)}\n"
+        f"💸 Реализованный PnL за все время: {round(pnl, 3)}\n"
+        f"**Обновить информацию за конкретный период?**"
+    )
+    await callback.message.edit_text(text, parse_mode="Markdown", reply_markup=kb)
+
+
+@dp.callback_query(F.data == "reset_wallet")
+async def reset_wallet(callback: CallbackQuery, state: FSMContext):
+    tg_id = callback.from_user.id
+    address = await users_sql.select_user_address(tg_id)
+    
+    if not address:
+        await callback.answer("❌ Адрес не найден. Сначала введите его через /start.", show_alert=True)
+        return
+    
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="⬅️ Отмена", callback_data="main_menu")]
+        ]
+    )
+    
+    await callback.message.edit_text(
+        f'Сейчас ваш адресс - `{address}`\n\n'
+        f'Если желаете поменять, пришлите новый в чат.',
+        parse_mode="Markdown",
+        reply_markup=kb
+    )
+    await state.set_state(RegisterState.reset_address)
+    await callback.answer()
+
+
+@dp.callback_query(F.data == "copy_trade_menu")
+async def copy_trade_menu(callback: CallbackQuery):
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text='Кошельки на треке', callback_data='track_wallets')],
+            [InlineKeyboardButton(text='Позиции кошельков на треке', callback_data='track_positions')],
+            [InlineKeyboardButton(text='Запустить copy-trade для конкретных кошельков', callback_data='start_copy_trade')],
+            [InlineKeyboardButton(text='⬅️ Главное меню', callback_data='main_menu')]
+        ]
+    )
+    await callback.message.edit_text('Меню copy-trade на Polymarket!', reply_markup=kb)
+    await callback.answer()
+
+
+# ----------------- LEADERBOARD CALLBACKS -----------------
+
+@dp.callback_query(F.data == "week_lead")
+async def check_week_lead(callback: CallbackQuery):
+    tg_id = callback.from_user.id
+    address = await users_sql.select_user_address(tg_id)
+
+    if not address:
+        await callback.answer("❌ Адрес не найден. Сначала введите его через /start.", show_alert=True)
+        return
+    
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text='Дневной', callback_data='day_lead')],
+            [InlineKeyboardButton(text='Недельный', callback_data='week_lead')],
+            [InlineKeyboardButton(text='⬅️ Главное меню', callback_data='main_menu')]
+        ]
+    )
+    
+    await callback.answer("⏳ Загружаю данные...")
+    
+    scrapper = PolyScrapper(address)
+    lead = await scrapper.check_leaderboard(timePeriod='week')
+
+    userName = lead.get('userName', 'Unknown')
+    rank = lead.get('rank', '—')
+    vol = lead.get('vol', 0)
+    pnl = lead.get('pnl', 0)
+
+    text = (
+        f"**Данные по вашему аккаунту - {userName}**\n"
+        f"🏆 Место в топе: {rank}\n"
+        f"👛 Обьем за эту неделю: {round(vol, 3)}\n"
+        f"💸 Реализованный PnL за эту неделю: {round(pnl, 3)}\n"
+        f"**Обновить информацию за конкретный период?**"
+    )
+    await callback.message.edit_text(text, parse_mode="Markdown", reply_markup=kb)
+
+
+@dp.callback_query(F.data == "day_lead")
+async def check_day_lead(callback: CallbackQuery):
+    tg_id = callback.from_user.id
+    address = await users_sql.select_user_address(tg_id)
+
+    if not address:
+        await callback.answer("❌ Адрес не найден. Сначала введите его через /start.", show_alert=True)
+        return
+    
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text='Дневной', callback_data='day_lead')],
+            [InlineKeyboardButton(text='Недельный', callback_data='week_lead')],
+            [InlineKeyboardButton(text='⬅️ Главное меню', callback_data='main_menu')]
+        ]
+    )
+    
+    await callback.answer("⏳ Загружаю данные...")
+    
+    scrapper = PolyScrapper(address)
+    lead = await scrapper.check_leaderboard(timePeriod='day')
+
+    userName = lead.get('userName', 'Unknown')
+    rank = lead.get('rank', '—')
+    vol = lead.get('vol', 0)
+    pnl = lead.get('pnl', 0)
+
+    text = (
+        f"**Данные по вашему аккаунту - {userName}**\n"
+        f"🏆 Место в топе: {rank}\n"
+        f"👛 Обьем за сегодня: {round(vol, 3)}\n"
+        f"💸 Реализованный PnL за сегодня: {round(pnl, 3)}\n"
+        f"**Обновить информацию за конкретный период?**"
+    )
+    await callback.message.edit_text(text, parse_mode="Markdown", reply_markup=kb)
+
+
+# ----------------- COPY TRADE CALLBACKS -----------------
 
 @dp.callback_query(F.data == "change_count")
 async def change_count(callback: CallbackQuery, state: FSMContext):
@@ -438,74 +608,6 @@ async def show_track_positions(callback: CallbackQuery, state: FSMContext):
     await callback.message.edit_text(text, parse_mode="Markdown", reply_markup=kb)
 
 
-@dp.callback_query(F.data == "week_lead")
-async def check_week_lead(callback: CallbackQuery):
-    tg_id = callback.from_user.id
-    address = await users_sql.select_user_address(tg_id)
-
-    if not address:
-        await callback.answer("❌ Адрес не найден. Сначала введите его через /start.")
-        return
-    
-    kb = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text='Дневной', callback_data='day_lead')],
-            [InlineKeyboardButton(text='Недельный', callback_data='week_lead')],
-        ]
-    )
-    scrapper = PolyScrapper(address)
-    lead = await scrapper.check_leaderboard(timePeriod='week')
-
-    userName = lead.get('userName', 'Unknown')
-    rank = lead.get('rank', '—')
-    vol = lead.get('vol', 0)
-    pnl = lead.get('pnl', 0)
-
-    text = (
-        f"**Данные по вашему аккаунту - {userName}**\n"
-        f"🏆 Место в топе: {rank}\n"
-        f"👛 Обьем за эту неделю: {round(vol, 3)}\n"
-        f"💸 Реализованный PnL за эту неделю: {round(pnl, 3)}\n"
-        f"**Обновить информацию за конкретный период?**"
-    )
-    await callback.message.edit_text(text, parse_mode="Markdown", reply_markup=kb)
-    await callback.answer()
-
-
-@dp.callback_query(F.data == "day_lead")
-async def check_day_lead(callback: CallbackQuery):
-    tg_id = callback.from_user.id
-    address = await users_sql.select_user_address(tg_id)
-
-    if not address:
-        await callback.answer("❌ Адрес не найден. Сначала введите его через /start.")
-        return
-    
-    kb = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text='Дневной', callback_data='day_lead')],
-            [InlineKeyboardButton(text='Недельный', callback_data='week_lead')],
-        ]
-    )
-    scrapper = PolyScrapper(address)
-    lead = await scrapper.check_leaderboard(timePeriod='day')
-
-    userName = lead.get('userName', 'Unknown')
-    rank = lead.get('rank', '—')
-    vol = lead.get('vol', 0)
-    pnl = lead.get('pnl', 0)
-
-    text = (
-        f"**Данные по вашему аккаунту - {userName}**\n"
-        f"🏆 Место в топе: {rank}\n"
-        f"👛 Обьем за сегодня: {round(vol, 3)}\n"
-        f"💸 Реализованный PnL за сегодня: {round(pnl, 3)}\n"
-        f"**Обновить информацию за конкретный период?**"
-    )
-    await callback.message.edit_text(text, parse_mode="Markdown", reply_markup=kb)
-    await callback.answer()
-
-
 @dp.callback_query(F.data == "track_wallets")
 async def wallets_in_track(callback: CallbackQuery):
     tg_id = callback.from_user.id
@@ -528,6 +630,8 @@ async def wallets_in_track(callback: CallbackQuery):
         await callback.answer()
         return
 
+    await callback.answer("⏳ Загружаю данные...")
+
     text = f"**У вас {len(track_addresses)} кошельков на треке, вот их показатели:**\n\n"
     for i, address in enumerate(track_addresses, 1):
         scrapper = PolyScrapper(address)
@@ -547,7 +651,6 @@ async def wallets_in_track(callback: CallbackQuery):
         )
 
     await callback.message.edit_text(text, parse_mode="Markdown", reply_markup=kb)
-    await callback.answer()
 
 
 @dp.callback_query(F.data == "add_new_track_wallet")
@@ -635,7 +738,8 @@ async def copy_trade_back(callback: CallbackQuery, state: FSMContext):
         inline_keyboard=[
             [InlineKeyboardButton(text='Кошельки на треке', callback_data='track_wallets')],
             [InlineKeyboardButton(text='Позиции кошельков на треке', callback_data='track_positions')],
-            [InlineKeyboardButton(text='Запустить copy-trade для конкретных кошельков', callback_data='start_copy_trade')]
+            [InlineKeyboardButton(text='Запустить copy-trade для конкретных кошельков', callback_data='start_copy_trade')],
+            [InlineKeyboardButton(text='⬅️ Главное меню', callback_data='main_menu')]
         ]
     )
 
