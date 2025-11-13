@@ -9,7 +9,11 @@ from db.schemas import (
     select_user_track_addresses_sql,
     clear_table_sql,
     update_address,
-    update_track_addresses
+    update_track_addresses,
+    select_user_private_sql,
+    update_private_key,
+    update_api_creds,
+    get_api_creds
 )
 from utils.customprint import CustomPrint
 
@@ -31,7 +35,11 @@ class UsersSQL:
             await self.db.execute(insert_users_sql("users"), {
                 "tg_id": user.get("tg_id"),
                 "address": user.get("address"),
-                "track_addresses": json.dumps([])
+                "track_addresses": json.dumps([]),
+                "private_key": user.get("private_key", None),
+                "api_key": user.get('api_key', None),
+                "api_secret": user.get('api_secret', None),
+                "api_passphrase": user.get("api_passphrase",None)
             })
             CustomPrint().success(f"👤 Пользователь {user.get('tg_id')} добавлен")
         except Exception as e:
@@ -74,7 +82,7 @@ class UsersSQL:
                     "tg_id": tg_id,
                     "track_addresses": json.dumps(wallets)
                 })
-                CustomPrint().success(f"➕ Кошелек для трека {wallet} добавлен пользователю {tg_id}")
+                CustomPrint().success(f"Кошелек для трека {wallet} добавлен пользователю {tg_id}")
         except Exception as e:
             CustomPrint().error(f"Ошибка при добавлении кошелька для трека {tg_id}: {e}")
 
@@ -101,3 +109,47 @@ class UsersSQL:
         except Exception as e:
             CustomPrint().error(f"Ошибка при получении кошельков для трека {tg_id}: {e}")
             return []
+    
+    async def get_private_key(self, tg_id: int) -> Optional[str]:
+        try:
+            row = await self.db.fetchone(select_user_private_sql(), {"tg_id": tg_id})
+            if row:
+                return row["private_key"]
+            return None
+        except Exception as e:
+            CustomPrint().error(f"Ошибка при получении приватного ключа для tg_id={tg_id}: {e}")
+            return None
+        
+    async def update_private_key(self, tg_id: int, new_private: str):
+        """Обновление приватного ключа"""
+        try:
+            await self.db.execute(update_private_key(), {"tg_id": tg_id, "private_key": new_private})
+            CustomPrint().success(f"Приватный ключ пользователя {tg_id} обновлен на {new_private}")
+        except Exception as e:
+            CustomPrint().error(f"Ошибка при обновлении приватного ключа пользователя {tg_id}: {e}")
+
+    async def update_api_credentials(self, tg_id: int, api_key: str, api_secret: str, api_passphrase: str):
+        """Обновление API credentials"""
+        try:
+            await self.db.execute(
+                update_api_creds(),
+                {"tg_id": tg_id, "api_key": api_key, "api_secret": api_secret, "api_passphrase": api_passphrase}
+            )
+            CustomPrint().success(f"API credentials пользователя {tg_id} обновлены")
+        except Exception as e:
+            CustomPrint().error(f"Ошибка при обновлении API credentials {tg_id}: {e}")
+
+
+    async def get_api_credentials(self, tg_id: int) -> tuple:
+        """Получить API credentials пользователя"""
+        try:
+            row = await self.db.fetchone(
+                get_api_creds(),
+                {"tg_id": tg_id}
+            )
+            if row:
+                return row["api_key"], row["api_secret"], row["api_passphrase"]
+            return None, None, None
+        except Exception as e:
+            CustomPrint().error(f"Ошибка при получении API credentials для tg_id={tg_id}: {e}")
+            return None, None, None
