@@ -24,3 +24,4 @@ class CopyTradeState(StatesGroup):
     setting_margin = State()  
     confirming_settings = State()
     monitoring = State()
+    setting_custom_margin = State()

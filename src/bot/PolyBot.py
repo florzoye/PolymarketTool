@@ -1,5 +1,8 @@
+import time
 import asyncio
 import logging
+import traceback
+from typing import Dict
 from itertools import islice
 
 from aiogram import F
@@ -11,10 +14,14 @@ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 from db.users import UsersSQL
 from db.manager import AsyncDatabaseManager
-from src.bot.states import TrackSettings, RegisterState
+from src.bot.states import TrackSettings, RegisterState, CopyTradeState
 
+from src.core.PolyCopy import PolyCopy
+from src.models.settings import Settings
+from src.models.position import Position
 from src.core.PolyScrapper import PolyScrapper
 from utils.formatters import format_money, format_pnl
+
 from data.config import BOT_TOKEN
 
 logging.basicConfig(level=logging.INFO)
@@ -24,6 +31,8 @@ dp = Dispatcher()
 
 db = AsyncDatabaseManager('users.db')
 users_sql = UsersSQL(db)
+
+active_monitors: Dict[int, asyncio.Task] = {}
 
 
 async def set_commands(bot: Bot):
@@ -54,8 +63,9 @@ async def cmd_start(message: types.Message, state: FSMContext):
 
     if address is None:
         await message.answer(
-            "👋 Привет! Твоего Polymarket адреса нет в базе.\n"
-            "Пожалуйста, отправь его сюда:",
+            "👋 Привет! Добро пожаловать в Polymarket Copy Trading Bot!\n\n"
+            "Для начала работы мне нужен ваш адрес на Polymarket.\n"
+            "📝 Отправьте ваш адрес (формат: 0x...):",
             parse_mode="Markdown"
         )
         await state.set_state(RegisterState.waiting_for_address)
@@ -92,37 +102,235 @@ async def get_address(message: types.Message, state: FSMContext):
         await message.answer("⚠️ Это невалидный Ethereum/Polymarket адрес. Попробуй снова.")
         return
 
+    await state.update_data(address=address)
+    
+    await message.answer(
+        "✅ Адрес принят!\n\n"
+        "🔐 Теперь отправьте ваш приватный ключ для автоматического исполнения сделок.\n\n"
+        "⚠️ **ВАЖНО**: Ваш приватный ключ будет надежно храниться в зашифрованном виде.\n"
+        "Он нужен для автоматического копирования сделок.\n\n"
+        "Формат: 0x... (64 символа после 0x)",
+        parse_mode="Markdown"
+    )
+    await state.set_state(RegisterState.waiting_for_private_key)
+
+
+@dp.message(RegisterState.waiting_for_private_key)
+async def get_private_key(message: types.Message, state: FSMContext):
+    private_key = message.text.strip()
+    
+    try:
+        await message.delete()
+    except:
+        pass
+
+    if not private_key.startswith("0x") or len(private_key) != 66:
+        await message.answer(
+            "⚠️ Невалидный приватный ключ.\n"
+            "Формат должен быть: 0x... (66 символов)\n\n"
+            "Попробуйте снова:"
+        )
+        return
+
+    await state.update_data(private_key=private_key)
+    
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="✅ Да, хочу", callback_data="setup_api_yes")],
+            [InlineKeyboardButton(text="❌ Пропустить (ограниченный функционал)", callback_data="setup_api_no")]
+        ]
+    )
+    
+    await message.answer(
+        "✅ Приватный ключ принят!\n\n"
+        "🔐 **API Credentials (опционально)**\n\n"
+        "Для автоматического исполнения ордеров через Polymarket API нужны:\n"
+        "• API Key\n"
+        "• API Secret\n"
+        "• API Passphrase\n\n"
+        "📖 Как получить: зайдите на  https://polymarket.com, зайдите настройки -> builder -> add API\n\n"
+        "⚠️ **Без API credentials** бот сможет только мониторить сделки, но не исполнять их автоматически.\n\n"
+        "Хотите настроить API credentials сейчас?",
+        parse_mode="Markdown",
+        reply_markup=kb
+    )
+    await state.set_state(RegisterState.waiting_for_api_key)
+
+
+@dp.callback_query(F.data == "setup_api_yes")
+async def setup_api_yes(callback: CallbackQuery, state: FSMContext):
+    await callback.message.edit_text(
+        "🔑 **Шаг 1/3: API Key**\n\n"
+        "Отправьте ваш Polymarket API Key:\n"
+        "(Получить можно на https://polymarket.com/settings/api)\n\n"
+        "Формат: строка из букв и цифр",
+        parse_mode="Markdown"
+    )
+    await state.set_state(RegisterState.waiting_for_api_key)
+    await callback.answer()
+
+
+@dp.callback_query(F.data == "setup_api_no")
+async def setup_api_no(callback: CallbackQuery, state: FSMContext):
+    tg_id = callback.from_user.id
+    data = await state.get_data()
+    
+    address = data.get("address")
+    private_key = data.get("private_key")
+    
     await users_sql.add_user({
         "tg_id": tg_id,
         "address": address
     })
-
+    await users_sql.update_private_key(tg_id, private_key)
+    
     await state.clear()
+    await callback.message.edit_text(
+        f"✅ Регистрация завершена!\n\n"
+        f"📍 Адрес: `{address}`\n"
+        f"🔐 Приватный ключ: сохранен\n"
+        f"⚠️ API Credentials: не настроены\n\n"
+        f"⚠️ **Внимание:** Без API credentials бот будет работать в режиме \"только мониторинг\".\n"
+        f"Автоматическое исполнение сделок будет недоступно.\n\n"
+        f"Вы можете добавить API credentials позже через настройки.",
+        parse_mode="Markdown",
+        reply_markup=get_main_menu_keyboard()
+    )
+    await callback.answer()
+
+
+@dp.message(RegisterState.waiting_for_api_key)
+async def get_api_key(message: types.Message, state: FSMContext):
+    api_key = message.text.strip()
+    
+    try:
+        await message.delete()
+    except:
+        pass
+    
+    if len(api_key) < 10:
+        await message.answer("⚠️ API Key слишком короткий. Попробуйте снова:")
+        return
+    
+    await state.update_data(api_key=api_key)
+    
     await message.answer(
-        f"✅ Адрес `{address}` сохранён.\n\n"
-        f"Выберите действие:",
+        "✅ API Key принят!\n\n"
+        "🔑 **Шаг 2/3: API Secret**\n\n"
+        "Теперь отправьте ваш API Secret:",
+        parse_mode="Markdown"
+    )
+    await state.set_state(RegisterState.waiting_for_api_secret)
+
+
+@dp.message(RegisterState.waiting_for_api_secret)
+async def get_api_secret(message: types.Message, state: FSMContext):
+    api_secret = message.text.strip()
+    
+    try:
+        await message.delete()
+    except:
+        pass
+    
+    if len(api_secret) < 10:
+        await message.answer("⚠️ API Secret слишком короткий. Попробуйте снова:")
+        return
+    
+    await state.update_data(api_secret=api_secret)
+    
+    await message.answer(
+        "✅ API Secret принят!\n\n"
+        "🔑 **Шаг 3/3: API Passphrase**\n\n"
+        "Наконец, отправьте ваш API Passphrase:",
+        parse_mode="Markdown"
+    )
+    await state.set_state(RegisterState.waiting_for_api_passphrase)
+
+
+@dp.message(RegisterState.waiting_for_api_passphrase)
+async def get_api_passphrase(message: types.Message, state: FSMContext):
+    api_passphrase = message.text.strip()
+    tg_id = message.from_user.id
+    
+    try:
+        await message.delete()
+    except:
+        pass
+    
+    if len(api_passphrase) < 3:
+        await message.answer("⚠️ API Passphrase слишком короткий. Попробуйте снова:")
+        return
+    
+    # Получаем все данные
+    data = await state.get_data()
+    address = data.get("address")
+    private_key = data.get("private_key")
+    api_key = data.get("api_key")
+    api_secret = data.get("api_secret")
+    
+    await users_sql.add_user({
+        "tg_id": tg_id,
+        "address": address
+    })
+    await users_sql.update_private_key(tg_id, private_key)
+    await users_sql.update_api_credentials(tg_id, api_key, api_secret, api_passphrase)
+    
+    await state.clear()
+    
+    await message.answer(
+        f"✅ **Регистрация полностью завершена!**\n\n"
+        f"📍 Адрес: `{address}`\n"
+        f"🔐 Приватный ключ: сохранен\n"
+        f"🔑 API Credentials: настроены ✅\n\n"
+        f"🎉 Теперь бот может автоматически исполнять сделки!\n"
+        f"Все данные надежно зашифрованы.",
         parse_mode="Markdown",
         reply_markup=get_main_menu_keyboard()
     )
 
-
 @dp.message(RegisterState.reset_address)
 async def reset_address(message: types.Message, state: FSMContext):
     address = message.text.strip()
-    tg_id = message.from_user.id
 
     if not address.startswith("0x") or len(address) != 42:
         await message.answer("⚠️ Это невалидный Ethereum/Polymarket адрес. Попробуй снова.")
         return
 
-    await users_sql.update_user_address(
-        tg_id=tg_id,
-        new_address=address
+    await state.update_data(new_address=address)
+    
+    await message.answer(
+        "✅ Новый адрес принят!\n\n"
+        "🔐 Отправьте новый приватный ключ для этого адреса:",
+        parse_mode="Markdown"
     )
+    await state.set_state(RegisterState.reset_private_key)
+
+
+@dp.message(RegisterState.reset_private_key)
+async def reset_private_key(message: types.Message, state: FSMContext):
+    private_key = message.text.strip()
+    tg_id = message.from_user.id
+    
+    try:
+        await message.delete()
+    except:
+        pass
+
+    if not private_key.startswith("0x") or len(private_key) != 66:
+        await message.answer("⚠️ Невалидный приватный ключ. Попробуйте снова.")
+        return
+
+    data = await state.get_data()
+    new_address = data.get("new_address")
+
+    await users_sql.update_user_address(tg_id, new_address)
+    await users_sql.update_private_key(tg_id, private_key)
 
     await state.clear()
     await message.answer(
-        f"✅ Адрес `{address}` сохранён.\n\n"
+        f"✅ Данные обновлены!\n\n"
+        f"📍 Новый адрес: `{new_address}`\n"
+        f"🔐 Приватный ключ обновлен\n\n"
         f"Выберите действие:",
         parse_mode="Markdown",
         reply_markup=get_main_menu_keyboard()
@@ -730,6 +938,7 @@ async def positions_wallets(callback: CallbackQuery, state: FSMContext):
     await show_track_settings_menu(callback.message, state)
     await callback.answer()
 
+
 @dp.callback_query(F.data == "copy_trade_back")
 async def copy_trade_back(callback: CallbackQuery, state: FSMContext):
     await state.clear()
@@ -796,6 +1005,795 @@ async def show_track_settings_menu(message, state: FSMContext):
     await message.edit_text(text, parse_mode="Markdown", reply_markup=kb)
 
 
+# ============== COPY TRADE START FLOW ==============
+
+@dp.callback_query(F.data == "start_copy_trade")
+async def start_copy_trade_flow(callback: CallbackQuery, state: FSMContext):
+    """Начало процесса настройки copy-trade"""
+    tg_id = callback.from_user.id
+    track_addresses = await users_sql.get_track_wallets(tg_id)
+    
+    if not track_addresses:
+        kb = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text="⬅️ Назад", callback_data="copy_trade_back")]
+            ]
+        )
+        await callback.message.edit_text(
+            "❌ У вас нет кошельков на треке.\n"
+            "Сначала добавьте кошельки через меню 'Кошельки на треке'.",
+            reply_markup=kb
+        )
+        await callback.answer()
+        return
+    
+    keyboard = []
+    for i, address in enumerate(track_addresses):
+        scrapper = PolyScrapper(address)
+        lead_data = await scrapper.check_leaderboard()
+        name = lead_data.get('userName', 'Unknown') if isinstance(lead_data, dict) else 'Unknown'
+        
+        keyboard.append([InlineKeyboardButton(
+            text=f"{name} ({address[:6]}...{address[-4:]})",
+            callback_data=f"select_wallet_{i}"
+        )])
+    
+    keyboard.append([InlineKeyboardButton(text="⬅️ Назад", callback_data="copy_trade_back")])
+    
+    kb = InlineKeyboardMarkup(inline_keyboard=keyboard)
+    
+    # Сохраняем список адресов в состояние
+    await state.update_data(track_addresses=track_addresses)
+    await state.set_state(CopyTradeState.selecting_wallet)
+    
+    await callback.message.edit_text(
+        "👛 **Выберите кошелек для мониторинга:**\n\n"
+        "Выберите кошелек, сделки которого вы хотите копировать.",
+        parse_mode="Markdown",
+        reply_markup=kb
+    )
+    await callback.answer()
+
+
+@dp.callback_query(F.data.startswith("select_wallet_"))
+async def wallet_selected(callback: CallbackQuery, state: FSMContext):
+    """Обработка выбора кошелька"""
+    wallet_index = int(callback.data.split("_")[-1])
+    data = await state.get_data()
+    track_addresses = data.get("track_addresses", [])
+    
+    if wallet_index >= len(track_addresses):
+        await callback.answer("❌ Ошибка выбора кошелька", show_alert=True)
+        return
+    
+    selected_wallet = track_addresses[wallet_index]
+    await state.update_data(selected_wallet=selected_wallet)
+    
+    # Переходим к выбору длительности
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="5 мин", callback_data="duration_300"),
+                InlineKeyboardButton(text="15 мин", callback_data="duration_900")
+            ],
+            [
+                InlineKeyboardButton(text="30 мин", callback_data="duration_1800"),
+                InlineKeyboardButton(text="1 час", callback_data="duration_3600")
+            ],
+            [
+                InlineKeyboardButton(text="2 часа", callback_data="duration_7200"),
+                InlineKeyboardButton(text="6 часов", callback_data="duration_21600")
+            ],
+            [
+                InlineKeyboardButton(text="12 часов", callback_data="duration_43200"),
+                InlineKeyboardButton(text="24 часа", callback_data="duration_86400")
+            ],
+            [InlineKeyboardButton(text="⬅️ Назад", callback_data="start_copy_trade")]
+        ]
+    )
+    
+    await state.set_state(CopyTradeState.setting_duration)
+    
+    await callback.message.edit_text(
+        f"✅ Выбран кошелек: `{selected_wallet}`\n\n"
+        f"⏱ **Выберите длительность мониторинга:**",
+        parse_mode="Markdown",
+        reply_markup=kb
+    )
+    await callback.answer()
+
+
+@dp.callback_query(F.data.startswith("duration_"))
+async def duration_selected(callback: CallbackQuery, state: FSMContext):
+    """Обработка выбора длительности"""
+    duration = int(callback.data.split("_")[-1])
+    await state.update_data(duration=duration)
+    
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="$1", callback_data="minamount_1"),
+                InlineKeyboardButton(text="$5", callback_data="minamount_5"),
+                InlineKeyboardButton(text="$10", callback_data="minamount_10")
+            ],
+            [
+                InlineKeyboardButton(text="$25", callback_data="minamount_25"),
+                InlineKeyboardButton(text="$50", callback_data="minamount_50"),
+                InlineKeyboardButton(text="$100", callback_data="minamount_100")
+            ],
+            [
+                InlineKeyboardButton(text="$250", callback_data="minamount_250"),
+                InlineKeyboardButton(text="$500", callback_data="minamount_500")
+            ],
+            [InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_wallet_select")]
+        ]
+    )
+    
+    await state.set_state(CopyTradeState.setting_min_amount)
+    
+    duration_text = f"{duration // 60} мин" if duration < 3600 else f"{duration // 3600} ч"
+    
+    await callback.message.edit_text(
+        f"⏱ Длительность: **{duration_text}**\n\n"
+        f"💰 **Выберите минимальную сумму ставки:**",
+        parse_mode="Markdown",
+        reply_markup=kb
+    )
+    await callback.answer()
+
+
+@dp.callback_query(F.data.startswith("minamount_"))
+async def min_amount_selected(callback: CallbackQuery, state: FSMContext):
+    """Обработка выбора минимальной суммы"""
+    min_amount = float(callback.data.split("_")[-1])
+    await state.update_data(min_amount=min_amount)
+    
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="✅ Да", callback_data="firstbet_true"),
+                InlineKeyboardButton(text="❌ Нет", callback_data="firstbet_false")
+            ],
+            [InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_duration")]
+        ]
+    )
+    
+    await state.set_state(CopyTradeState.setting_first_bet)
+    
+    await callback.message.edit_text(
+        f"💰 Минимальная сумма: **${min_amount}**\n\n"
+        f"🎯 **Копировать только первые ставки на рынок?**\n"
+        f"(Если да, то будут копироваться только ставки, которые являются первыми на конкретный рынок)",
+        parse_mode="Markdown",
+        reply_markup=kb
+    )
+    await callback.answer()
+
+
+@dp.callback_query(F.data.startswith("firstbet_"))
+async def first_bet_selected(callback: CallbackQuery, state: FSMContext):
+    """Обработка выбора фильтра первой ставки"""
+    first_bet = callback.data.split("_")[-1] == "true"
+    await state.update_data(first_bet=first_bet)
+    
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="0.01", callback_data="minquote_0.01"),
+                InlineKeyboardButton(text="0.05", callback_data="minquote_0.05"),
+                InlineKeyboardButton(text="0.10", callback_data="minquote_0.10")
+            ],
+            [
+                InlineKeyboardButton(text="0.20", callback_data="minquote_0.20"),
+                InlineKeyboardButton(text="0.30", callback_data="minquote_0.30"),
+                InlineKeyboardButton(text="0.40", callback_data="minquote_0.40")
+            ],
+            [
+                InlineKeyboardButton(text="0.50", callback_data="minquote_0.50"),
+                InlineKeyboardButton(text="0.60", callback_data="minquote_0.60")
+            ],
+            [InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_minamount")]
+        ]
+    )
+    
+    await state.set_state(CopyTradeState.setting_min_quote)
+    
+    first_bet_text = "✅ Да" if first_bet else "❌ Нет"
+    
+    await callback.message.edit_text(
+        f"🎯 Только первые ставки: **{first_bet_text}**\n\n"
+        f"📊 **Выберите минимальную котировку:**\n"
+        f"(Ставки с котировкой ниже этого значения будут игнорироваться)",
+        parse_mode="Markdown",
+        reply_markup=kb
+    )
+    await callback.answer()
+
+
+@dp.callback_query(F.data.startswith("minquote_"))
+async def min_quote_selected(callback: CallbackQuery, state: FSMContext):
+    """Обработка выбора минимальной котировки"""
+    min_quote = float(callback.data.split("_")[-1])
+    await state.update_data(min_quote=min_quote)
+    
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="0.50", callback_data="maxquote_0.50"),
+                InlineKeyboardButton(text="0.60", callback_data="maxquote_0.60"),
+                InlineKeyboardButton(text="0.70", callback_data="maxquote_0.70")
+            ],
+            [
+                InlineKeyboardButton(text="0.80", callback_data="maxquote_0.80"),
+                InlineKeyboardButton(text="0.90", callback_data="maxquote_0.90"),
+                InlineKeyboardButton(text="0.95", callback_data="maxquote_0.95")
+            ],
+            [
+                InlineKeyboardButton(text="0.99", callback_data="maxquote_0.99"),
+                InlineKeyboardButton(text="1.00", callback_data="maxquote_1.00")
+            ],
+            [InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_firstbet")]
+        ]
+    )
+    
+    await state.set_state(CopyTradeState.setting_max_quote)
+    
+    await callback.message.edit_text(
+        f"📊 Минимальная котировка: **{min_quote}**\n\n"
+        f"📈 **Выберите максимальную котировку:**\n"
+        f"(Ставки с котировкой выше этого значения будут игнорироваться)",
+        parse_mode="Markdown",
+        reply_markup=kb
+    )
+    await callback.answer()
+
+
+@dp.callback_query(F.data.startswith("maxquote_"))
+async def max_quote_selected(callback: CallbackQuery, state: FSMContext):
+    """Обработка выбора максимальной котировки и переход к настройке маржи"""
+    max_quote = float(callback.data.split("_")[-1])
+    await state.update_data(max_quote=max_quote)
+    
+    # Переходим к настройке маржи
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="$5", callback_data="margin_5"),
+                InlineKeyboardButton(text="$10", callback_data="margin_10"),
+                InlineKeyboardButton(text="$25", callback_data="margin_25")
+            ],
+            [
+                InlineKeyboardButton(text="$50", callback_data="margin_50"),
+                InlineKeyboardButton(text="$100", callback_data="margin_100"),
+                InlineKeyboardButton(text="$250", callback_data="margin_250")
+            ],
+            [
+                InlineKeyboardButton(text="$500", callback_data="margin_500"),
+                InlineKeyboardButton(text="$1000", callback_data="margin_1000")
+            ],
+            [InlineKeyboardButton(text="✏️ Ввести свою сумму", callback_data="margin_custom")],
+            [InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_minquote")]
+        ]
+    )
+    
+    await state.set_state(CopyTradeState.setting_margin)
+    
+    await callback.message.edit_text(
+        f"📈 Максимальная котировка: **{max_quote}**\n\n"
+        f"💰 **Выберите размер маржи для каждой сделки:**\n"
+        f"(Эта сумма будет использоваться для копирования сделок)\n\n"
+        f"💡 Вы также можете ввести свою сумму",
+        parse_mode="Markdown",
+        reply_markup=kb
+    )
+    await callback.answer()
+
+
+@dp.callback_query(F.data == "margin_custom")
+async def margin_custom_prompt(callback: CallbackQuery, state: FSMContext):
+    """Запрос на ввод кастомной маржи"""
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="⬅️ Назад к выбору", callback_data="back_to_margin_select")]
+        ]
+    )
+    
+    await callback.message.edit_text(
+        "✏️ **Ввод кастомной маржи**\n\n"
+        "💰 Введите сумму в долларах (USD):\n\n"
+        "Примеры:\n"
+        "• `15` - пятнадцать долларов\n"
+        "• `75.5` - семьдесят пять долларов и 50 центов\n"
+        "• `333` - триста тридцать три доллара\n\n"
+        "⚠️ **Минимум:** $1\n"
+        "⚠️ **Максимум:** $10000\n\n"
+        "Отправьте число в чат:",
+        parse_mode="Markdown",
+        reply_markup=kb
+    )
+    await state.set_state(CopyTradeState.setting_custom_margin)
+    await callback.answer()
+
+
+@dp.message(CopyTradeState.setting_custom_margin)
+async def custom_margin_input(message: types.Message, state: FSMContext):
+    """Обработка введенной кастомной маржи"""
+    try:
+        margin_amount = float(message.text.strip().replace(',', '.'))
+        
+        if margin_amount < 1:
+            await message.answer(
+                "⚠️ Сумма слишком маленькая!\n"
+                "Минимальная маржа: $1\n\n"
+                "Попробуйте снова:"
+            )
+            return
+        
+        if margin_amount > 10000:
+            await message.answer(
+                "⚠️ Сумма слишком большая!\n"
+                "Максимальная маржа: $10000\n\n"
+                "Попробуйте снова:"
+            )
+            return
+        
+        try:
+            await message.delete()
+        except:
+            pass
+        
+        await state.update_data(margin_amount=margin_amount)
+        
+        data = await state.get_data()
+        
+        selected_wallet = data.get("selected_wallet", "")
+        duration = data.get("duration", 0)
+        min_amount = data.get("min_amount", 0)
+        first_bet = data.get("first_bet", False)
+        min_quote = data.get("min_quote", 0)
+        max_quote = data.get("max_quote", 1)
+        
+        duration_text = f"{duration // 60} мин" if duration < 3600 else f"{duration // 3600} ч"
+        first_bet_text = "✅ Да" if first_bet else "❌ Нет"
+        
+        kb = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text="🚀 Запустить мониторинг", callback_data="confirm_start_monitoring")],
+                [InlineKeyboardButton(text="🔄 Изменить настройки", callback_data="start_copy_trade")],
+                [InlineKeyboardButton(text="⬅️ Отмена", callback_data="copy_trade_back")]
+            ]
+        )
+        
+        await state.set_state(CopyTradeState.confirming_settings)
+        
+        text = (
+            "📋 **Итоговые настройки мониторинга:**\n\n"
+            f"👛 Кошелек: `{selected_wallet[:8]}...{selected_wallet[-6:]}`\n"
+            f"⏱ Длительность: **{duration_text}**\n"
+            f"💰 Мин. сумма: **${min_amount}**\n"
+            f"🎯 Только первые ставки: **{first_bet_text}**\n"
+            f"📊 Котировки: **{min_quote} - {max_quote}**\n"
+            f"💵 Маржа на сделку: **${margin_amount}** ✏️\n\n"
+            f"⚠️ При нахождении подходящей сделки, она будет автоматически исполнена!\n\n"
+            f"Всё верно? Нажмите '🚀 Запустить мониторинг'"
+        )
+        
+        await message.answer(text, parse_mode="Markdown", reply_markup=kb)
+        
+    except ValueError:
+        await message.answer(
+            "⚠️ Неверный формат!\n\n"
+            "Введите число (например: 15 или 75.5)\n"
+            "Попробуйте снова:"
+        )
+
+
+@dp.callback_query(F.data == "back_to_margin_select")
+async def back_to_margin_select(callback: CallbackQuery, state: FSMContext):
+    """Возврат к выбору предустановленной маржи"""
+    data = await state.get_data()
+    max_quote = data.get("max_quote", 0.99)
+    
+    # Эмулируем выбор max_quote заново
+    fake_data = f"maxquote_{max_quote}"
+    callback.data = fake_data
+    await max_quote_selected(callback, state)
+
+
+@dp.callback_query(F.data.startswith("margin_"))
+async def margin_selected(callback: CallbackQuery, state: FSMContext):
+    """Обработка выбора размера маржи и показ итоговой настройки"""
+    if callback.data == "margin_custom":
+        return
+    
+    margin_amount = float(callback.data.split("_")[-1])
+    await state.update_data(margin_amount=margin_amount)
+    
+    data = await state.get_data()
+    
+    selected_wallet = data.get("selected_wallet", "")
+    duration = data.get("duration", 0)
+    min_amount = data.get("min_amount", 0)
+    first_bet = data.get("first_bet", False)
+    min_quote = data.get("min_quote", 0)
+    max_quote = data.get("max_quote", 1)
+    
+    duration_text = f"{duration // 60} мин" if duration < 3600 else f"{duration // 3600} ч"
+    first_bet_text = "✅ Да" if first_bet else "❌ Нет"
+    
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="🚀 Запустить мониторинг", callback_data="confirm_start_monitoring")],
+            [InlineKeyboardButton(text="🔄 Изменить настройки", callback_data="start_copy_trade")],
+            [InlineKeyboardButton(text="⬅️ Отмена", callback_data="copy_trade_back")]
+        ]
+    )
+    
+    await state.set_state(CopyTradeState.confirming_settings)
+    
+    text = (
+        "📋 **Итоговые настройки мониторинга:**\n\n"
+        f"👛 Кошелек: `{selected_wallet[:8]}...{selected_wallet[-6:]}`\n"
+        f"⏱ Длительность: **{duration_text}**\n"
+        f"💰 Мин. сумма: **${min_amount}**\n"
+        f"🎯 Только первые ставки: **{first_bet_text}**\n"
+        f"📊 Котировки: **{min_quote} - {max_quote}**\n"
+        f"💵 Маржа на сделку: **${margin_amount}**\n\n"
+        f"⚠️ При нахождении подходящей сделки, она будет автоматически исполнена!\n\n"
+        f"Всё верно? Нажмите '🚀 Запустить мониторинг'"
+    )
+    
+    await callback.message.edit_text(text, parse_mode="Markdown", reply_markup=kb)
+    await callback.answer()
+
+
+@dp.callback_query(F.data == "confirm_start_monitoring")
+async def confirm_and_start_monitoring(callback: CallbackQuery, state: FSMContext):
+    """Подтверждение и запуск мониторинга с автоматическим исполнением"""
+    tg_id = callback.from_user.id
+    data = await state.get_data()
+    
+    if tg_id in active_monitors and not active_monitors[tg_id].done():
+        kb = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text="🛑 Остановить текущий", callback_data="stop_monitoring")],
+                [InlineKeyboardButton(text="⬅️ Назад", callback_data="copy_trade_back")]
+            ]
+        )
+        await callback.message.edit_text(
+            "⚠️ У вас уже запущен мониторинг!\n"
+            "Сначала остановите текущий, чтобы запустить новый.",
+            reply_markup=kb
+        )
+        await callback.answer()
+        return
+    
+    private_key = await users_sql.get_private_key(tg_id)
+    user_address = await users_sql.select_user_address(tg_id)
+    api_key, api_secret, api_passphrase = await users_sql.get_api_credentials(tg_id)
+    
+    if not private_key:
+        kb = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text="⬅️ Назад", callback_data="copy_trade_back")]
+            ]
+        )
+        await callback.message.edit_text(
+            "❌ Приватный ключ не найден!\n"
+            "Используйте /start для повторной регистрации.",
+            reply_markup=kb
+        )
+        await callback.answer()
+        return
+    
+    if not all([api_key, api_secret, api_passphrase]):
+        kb = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text="✅ Продолжить без автоисполнения", callback_data="continue_without_api")],
+                [InlineKeyboardButton(text="⬅️ Отмена", callback_data="copy_trade_back")]
+            ]
+        )
+        await callback.message.edit_text(
+            "⚠️ **API Credentials не настроены!**\n\n"
+            "Без API credentials бот может только мониторить сделки,\n"
+            "но не исполнять их автоматически.\n\n"
+            "Вы получите уведомления о найденных сделках,\n"
+            "но придется исполнять их вручную.\n\n"
+            "Хотите продолжить в режиме \"только мониторинг\"?",
+            parse_mode="Markdown",
+            reply_markup=kb
+        )
+        await state.update_data(ready_to_start=True)
+        await callback.answer()
+        return
+    
+    await _start_monitoring_task(callback, state, tg_id, data, private_key, user_address, api_key, api_secret, api_passphrase)
+
+
+@dp.callback_query(F.data == "continue_without_api")
+async def continue_without_api(callback: CallbackQuery, state: FSMContext):
+    """Продолжить мониторинг без API credentials"""
+    tg_id = callback.from_user.id
+    data = await state.get_data()
+    
+    private_key = await users_sql.get_private_key(tg_id)
+    user_address = await users_sql.select_user_address(tg_id)
+    
+    await _start_monitoring_task(callback, state, tg_id, data, private_key, user_address, None, None, None)
+
+
+async def _start_monitoring_task(callback, state, tg_id, data, private_key, user_address, api_key, api_secret, api_passphrase):
+    """Запуск мониторинга кошелька с поддержкой режима без API"""
+
+    # Основные настройки
+    settings = Settings(
+        exp_at=data.get("duration", 3600),
+        started_at=int(time.time()),
+        first_bet=data.get("first_bet", False),
+        min_amount=data.get("min_amount", 1),
+        min_quote=data.get("min_quote", 0.01),
+        max_quote=data.get("max_quote", 0.99),
+    )
+
+    selected_wallet = data.get("selected_wallet", "")
+    margin_amount = data.get("margin_amount", 0)
+
+    scrapper = PolyScrapper(selected_wallet)
+
+    api_enabled = all([api_key, api_secret, api_passphrase])
+
+    poly_copy = PolyCopy(
+        settings,
+        scrapper,
+        private_key=private_key,
+        margin_amount=margin_amount,
+        funder=user_address,
+        api_key=api_key if api_enabled else None,
+        api_secret=api_secret if api_enabled else None,
+        api_passphrase=api_passphrase if api_enabled else None
+    )
+
+    # === CALLBACK ДЛЯ УВЕДОМЛЕНИЙ ===
+    async def notify_found_position(position: Position, message: str, trade_executed: bool, trade_message: str):
+        emoji = "✅" if trade_executed else "⏳"
+        status = "Сделка исполнена!" if trade_executed else (
+            "Только мониторинг" if not api_enabled else "Ошибка при исполнении"
+        )
+
+        text = (
+            f"{emoji} **Найдена подходящая сделка!**\n\n"
+            f"📝 {position.title}\n"
+            f"💰 Сумма: ${round(position.usdcSize, 2)}\n"
+            f"📊 Котировка: {round(position.price, 3)}\n"
+            f"🎲 Исход: {position.outcome}\n"
+        )
+
+        if api_enabled:
+            text += f"💵 Маржа: ${margin_amount}\n"
+
+        text += f"\n📌 {message}\n🔄 {status}\n"
+
+        if trade_message:
+            text += f"\n🗒 {trade_message}"
+
+        if api_enabled:
+            text += "\n\nМониторинг продолжается..."
+        else:
+            text += "\n\n⚠️ Режим: только мониторинг (без автоисполнения)"
+
+        try:
+            await bot.send_message(tg_id, text, parse_mode="Markdown")
+            logging.info(f"✅ Уведомление отправлено пользователю {tg_id}")
+        except Exception as e:
+            logging.error(f"❌ Ошибка отправки уведомления пользователю {tg_id}: {e}")
+
+    async def run_monitoring():
+        try:
+            logging.info(f"🚀 Мониторинг запущен для пользователя {tg_id}")
+            await poly_copy.monitoring_wallets(callback_func=notify_found_position)
+
+            stats = poly_copy.get_statistics()
+            summary = (
+                f"✅ **Мониторинг завершен!**\n\n"
+                f"📊 Найдено сделок: {stats['total_found']}\n"
+                f"🎯 Отслежено рынков: {stats['markets_tracked']}"
+            )
+
+            kb = InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [InlineKeyboardButton(text="🔄 Запустить новый", callback_data="start_copy_trade")],
+                    [InlineKeyboardButton(text="⬅️ Главное меню", callback_data="main_menu")]
+                ]
+            )
+
+            await bot.send_message(tg_id, summary, parse_mode="Markdown", reply_markup=kb)
+            logging.info(f"✅ Мониторинг завершен для пользователя {tg_id}")
+
+        except asyncio.CancelledError:
+            stats = poly_copy.get_statistics()
+            cancel_text = (
+                f"🛑 **Мониторинг остановлен**\n\n"
+                f"📊 Найдено сделок: {stats['total_found']}\n"
+                f"🎯 Отслежено рынков: {stats['markets_tracked']}"
+            )
+
+            kb = InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [InlineKeyboardButton(text="🔄 Запустить новый", callback_data="start_copy_trade")],
+                    [InlineKeyboardButton(text="⬅️ Главное меню", callback_data="main_menu")]
+                ]
+            )
+
+            await bot.send_message(tg_id, cancel_text, parse_mode="Markdown", reply_markup=kb)
+            logging.info(f"🛑 Мониторинг остановлен пользователем {tg_id}")
+
+        except Exception as e:
+            err = f"❌ **Ошибка при мониторинге:** `{str(e)}`"
+            logging.error(f"Ошибка мониторинга: {e}", exc_info=True)
+            await bot.send_message(tg_id, err, parse_mode="Markdown")
+
+        finally:
+            if tg_id in active_monitors:
+                del active_monitors[tg_id]
+                logging.info(f"🧹 Очищен мониторинг пользователя {tg_id}")
+
+    task = asyncio.create_task(run_monitoring())
+    active_monitors[tg_id] = task
+
+    # === UI ===
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="🛑 Остановить мониторинг", callback_data="stop_monitoring")],
+            [InlineKeyboardButton(text="📊 Статистика", callback_data="monitoring_stats")]
+        ]
+    )
+
+    duration_text = f"{data.get('duration', 0) // 60} мин" if data.get('duration', 0) < 3600 else f"{data.get('duration', 0) // 3600} ч"
+    mode_text = (
+        "✨ Подходящие сделки будут автоматически исполняться!" if api_enabled
+        else "⚠️ Режим: только мониторинг (уведомления без исполнения)"
+    )
+
+    try:
+        await callback.message.edit_text(
+            f"🚀 **Мониторинг запущен!**\n\n"
+            f"👛 Кошелек: `{selected_wallet[:8]}...{selected_wallet[-6:]}`\n"
+            f"⏱ Длительность: {duration_text}\n"
+            f"💵 Маржа: ${margin_amount}\n\n"
+            f"{mode_text}\n\n"
+            f"Вы получите уведомление о каждой сделке.",
+            parse_mode="Markdown",
+            reply_markup=kb
+        )
+    except Exception as e:
+        logging.warning(f"⚠️ Не удалось отредактировать сообщение: {e}")
+        await bot.send_message(
+            tg_id,
+            f"🚀 **Мониторинг запущен!**\n\n"
+            f"👛 Кошелек: `{selected_wallet[:8]}...{selected_wallet[-6:]}`\n"
+            f"⏱ Длительность: {duration_text}\n"
+            f"💵 Маржа: ${margin_amount}\n\n"
+            f"{mode_text}\n\n"
+            f"Вы получите уведомление о каждой сделке.",
+            parse_mode="Markdown",
+            reply_markup=kb
+        )
+
+    await state.set_state(CopyTradeState.monitoring)
+    await callback.answer("✅ Мониторинг запущен!")
+
+
+@dp.callback_query(F.data == "stop_monitoring")
+async def stop_monitoring(callback: CallbackQuery, state: FSMContext):
+    """Остановка мониторинга с выводом статистики"""
+    tg_id = callback.from_user.id
+    
+    if tg_id not in active_monitors:
+        await callback.answer("❌ Нет активного мониторинга", show_alert=True)
+        return
+    
+    task = active_monitors[tg_id]
+    
+    task.cancel()
+    
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
+    
+    if tg_id in active_monitors:
+        del active_monitors[tg_id]
+    
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="🔄 Запустить новый", callback_data="start_copy_trade")],
+            [InlineKeyboardButton(text="⬅️ Главное меню", callback_data="main_menu")]
+        ]
+    )
+    
+    await state.clear()
+    await callback.message.edit_text(
+        "🛑 **Мониторинг остановлен**\n\n"
+        "Статистика была отправлена в чат.\n"
+        "Вы можете запустить новый мониторинг в любое время.",
+        parse_mode="Markdown",
+        reply_markup=kb
+    )
+    await callback.answer("✅ Мониторинг остановлен")
+
+
+@dp.callback_query(F.data == "monitoring_stats")
+async def show_monitoring_stats(callback: CallbackQuery):
+    """Показать статистику текущего мониторинга"""
+    tg_id = callback.from_user.id
+    
+    if tg_id not in active_monitors:
+        await callback.answer("❌ Нет активного мониторинга", show_alert=True)
+        return
+    
+    task = active_monitors[tg_id]
+    
+    if task.done():
+        status = "Завершен"
+    elif task.cancelled():
+        status = "Отменен"
+    else:
+        status = "Активен ✅"
+    
+    await callback.answer(
+        f"📊 Статус мониторинга: {status}\n"
+        f"Вы получите детальную статистику после завершения.",
+        show_alert=True
+    )
+
+
+# ============== НАВИГАЦИОННЫЕ ОБРАБОТЧИКИ ==============
+
+@dp.callback_query(F.data == "back_to_wallet_select")
+async def back_to_wallet_select(callback: CallbackQuery, state: FSMContext):
+    await start_copy_trade_flow(callback, state)
+
+
+@dp.callback_query(F.data == "back_to_minquote")
+async def back_to_minquote(callback: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    max_quote = data.get("max_quote", 0.99)
+    fake_callback_data = f"minquote_{data.get('min_quote', 0.01)}"
+    callback.data = fake_callback_data
+    await min_quote_selected(callback, state)
+
+
+@dp.callback_query(F.data == "back_to_duration")
+async def back_to_duration(callback: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    await state.update_data(selected_wallet=data.get("selected_wallet"))
+    fake_callback_data = types.CallbackQuery(
+        id=callback.id,
+        from_user=callback.from_user,
+        chat_instance=callback.chat_instance,
+        data=f"select_wallet_0"
+    )
+    await wallet_selected(callback, state)
+
+
+@dp.callback_query(F.data == "back_to_minamount")
+async def back_to_minamount(callback: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    duration = data.get("duration", 3600)
+    fake_callback_data = f"duration_{duration}"
+    callback.data = fake_callback_data
+    await duration_selected(callback, state)
+
+
+@dp.callback_query(F.data == "back_to_firstbet")
+async def back_to_firstbet(callback: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    min_amount = data.get("min_amount", 1)
+    fake_callback_data = f"minamount_{min_amount}"
+    callback.data = fake_callback_data
+    await min_amount_selected(callback, state)
+
+
 async def main():
     try:
         await users_sql.create_tables()
@@ -805,7 +1803,6 @@ async def main():
         logging.exception("Fatal error in bot:")
     finally:
         await bot.session.close()
-        # await users_sql.clear_users()
         await db.close()
 
 
