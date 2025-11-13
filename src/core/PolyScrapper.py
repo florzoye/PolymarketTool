@@ -1,14 +1,13 @@
 import time 
 import asyncio
 import aiohttp
-from typing import List, Optional
+from typing import List
 
 from fake_useragent import FakeUserAgent
 from utils.customprint import CustomPrint
 from utils.decorator import retry_async
 from src.models.position import Position
 
-from data import config
 
 class PolyScrapper:
     def __init__(self, address: str):
@@ -57,8 +56,8 @@ class PolyScrapper:
             'sizeThreshold': '.5',
             'limit': limit,
             'offset': offset,
-            'sortBy':sortBy, # INITIAL - новые, CASHPNL, CURRENT - самое большое колво валуе (маржа + пнл)
-            'sortDirection': 'DESC', # DESC - сначала топовые, ASC - наоборот
+            'sortBy':sortBy,
+            'sortDirection': 'DESC',
         }
         headers = {
             'accept': 'application/json',
@@ -116,81 +115,50 @@ class PolyScrapper:
         return all_positions
     
 
-    @retry_async(attempts=3)
-    async def check_new_bets(self) -> Position:  
+    async def get_last_bets(self) -> List[Position]:  
         """
-        Мониторит ставки ТОЛЬКО НА ПОКУПКУ И НЕ СТАРШЕ 2 минут
-        """
-        async with aiohttp.ClientSession() as session:
-            params, headers = self._create_activity_request_data()
-            while True:
-                async with session.get(
-                    f'{self.base_url}activity',
-                    params=params,
-                    headers=headers
-                ) as response:
-                    if response.status != 200:
-                        CustomPrint().error(f"⚠️ Ошибка {response.status}")
-                        await asyncio.sleep(config.DELAY)
-                        continue
-
-                    data = await response.json()
-                    if not data:
-                        await asyncio.sleep(config.DELAY)
-                        continue
-
-                    newest_bet = data[0]
-                    bet_time = int(newest_bet.get('timestamp', 0))
-                    diff_minutes = (time.time() - bet_time) / 60
-
-                    if diff_minutes <= 2 and newest_bet.get('side') == "BUY":
-                        CustomPrint().success(f'Новая ставка: {newest_bet}')
-                        return Position(
-                            slug=newest_bet.get('slug'),
-                            conditionId=newest_bet.get('conditionId'),
-                            outcome=newest_bet.get('outcome'),
-                            usdcSize=newest_bet.get('usdcSize'),
-                            title=newest_bet.get('title'),
-                            price=newest_bet.get('price')
-                        )
-
-                await asyncio.sleep(config.DELAY)
-
-
-    @retry_async(attempts=3)
-    async def get_last_bets(self) -> List[dict]:  
-        """
-        Мониторит ставки ТОЛЬКО НА ПОКУПКУ И НЕ СТАРШЕ 2 минут
+        Получает последние ставки (ТОЛЬКО ПОКУПКИ, НЕ СТАРШЕ 2 минут)
+        Возвращает список Position объектов
         """
         async with aiohttp.ClientSession() as session:
             params, headers = self._create_activity_request_data(limit='30')
-            while True:
-                async with session.get(
-                    f'{self.base_url}activity',
-                    params=params,
-                    headers=headers
-                ) as response:
-                    if response.status != 200:
-                        CustomPrint().error(f"⚠️ Ошибка {response.status}")
-                        return None
-                    
-                    data = await response.json()
-                    print(data)
-                    if not data:
-                        await asyncio.sleep(config.DELAY)
-                        return None
+            
+            async with session.get(
+                f'{self.base_url}activity',
+                params=params,
+                headers=headers
+            ) as response:
+                if response.status != 200:
+                    CustomPrint().error(f"⚠️ Ошибка {response.status}")
+                    return []
+                
+                data = await response.json()
+                
+                if not data:
+                    return []
 
-                    return [
-                        Position(
-                            slug=pos.get('slug'),
-                            conditionId=pos.get('conditionId'),
-                            outcome=pos.get('outcome'),
-                            usdcSize=pos.get('usdcSize'),
-                            title=pos.get('title'),
-                            price=pos.get('price')
-                        ) 
-                        for pos in data 
-                    ]
+                current_time = time.time()
+                filtered_bets = []
+                
+                for pos in data:
+                    bet_time = int(pos.get('timestamp', 0))
+                    age_minutes = (current_time - bet_time) / 60
+                    
+                    if age_minutes > 2 or pos.get('side') != 'BUY':
+                        continue
+                    
+                    filtered_bets.append(
+                    Position(
+                        slug=pos.get('slug'),
+                        conditionId=pos.get('conditionId'),
+                        outcome=pos.get('outcome'),
+                        usdcSize=pos.get('usdcSize'),
+                        title=pos.get('title'),
+                        price=pos.get('price'),
+                        token_id=pos.get('asset')
+                    ))
+                
+                return filtered_bets
                         
 
     @retry_async(attempts=3)
@@ -211,9 +179,8 @@ class PolyScrapper:
     @retry_async(attempts=3)
     async def get_value_user(self):
         async with aiohttp.ClientSession() as session:
-            _, headers = self._create_activity_request_data
+            _, headers = self._create_activity_request_data()
             params = {'user': self.address}
-
             response = await session.get(
                 f'{self.base_url}value',
                 params=params,
@@ -223,14 +190,3 @@ class PolyScrapper:
                     CustomPrint().error(f"⚠️ {response.status}")
                     return None
             return round((await response.json())[0]['value'], 3)
-
-
-async def main():
-    wallet = '0xd289b54aa8849c5cc146899a4c56910e7ec2d0bc'
-    ins = PolyScrapper(wallet)
-    pos = await ins.get_last_bets()
-    from pprint import pprint
-    pprint(len(pos))
-
-if __name__ == "__main__":
-    asyncio.run(main())
