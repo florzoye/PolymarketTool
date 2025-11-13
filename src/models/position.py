@@ -5,6 +5,7 @@ class Position(BaseModel):
     title: str
     outcome: str
     price: float
+    token_id: str | int 
     conditionId: str
     usdcSize: int | float
 
