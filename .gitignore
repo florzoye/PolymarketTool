@@ -4,6 +4,7 @@ __pycache__/
 test.py
 credentials.json
 token.json
+start.bat
 
 # C extensions
 *.so

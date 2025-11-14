@@ -1,7 +1,6 @@
 import time
 import asyncio
 import logging
-import traceback
 from typing import Dict
 from itertools import islice
 
@@ -29,7 +28,7 @@ logging.basicConfig(level=logging.INFO)
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
-db = AsyncDatabaseManager('users.db')
+db = AsyncDatabaseManager('data/users.db')
 users_sql = UsersSQL(db)
 
 active_monitors: Dict[int, asyncio.Task] = {}

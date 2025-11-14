@@ -1,0 +1,15 @@
+services:
+  bot:
+    build: .
+    restart: unless-stopped
+    volumes:
+      - bot_data:/app/bot_data    
+    environment:
+      - BOT_TOKEN=${BOT_TOKEN}
+      - DATABASE_URL=sqlite:///./bot_data/users.db 
+      - DEBUG=${DEBUG:-False}
+    env_file:
+      - .env
+
+volumes:
+  bot_data:
