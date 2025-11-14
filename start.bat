@@ -14,5 +14,5 @@ echo Activating virtual environment...
 call venv\Scripts\activate.bat
 
 echo.
-python src/bot/PolyBot.py
+python main.py
 pause
