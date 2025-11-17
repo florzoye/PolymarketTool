@@ -1806,46 +1806,6 @@ async def back_to_wallet_select(callback: CallbackQuery, state: FSMContext):
     await start_copy_trade_flow(callback, state)
 
 
-@dp.callback_query(F.data == "back_to_minquote")
-async def back_to_minquote(callback: CallbackQuery, state: FSMContext):
-    data = await state.get_data()
-    max_quote = data.get("max_quote", 0.99)
-    fake_callback_data = f"minquote_{data.get('min_quote', 0.01)}"
-    callback.data = fake_callback_data
-    await min_quote_selected(callback, state)
-
-
-@dp.callback_query(F.data == "back_to_duration")
-async def back_to_duration(callback: CallbackQuery, state: FSMContext):
-    data = await state.get_data()
-    await state.update_data(selected_wallet=data.get("selected_wallet"))
-    fake_callback_data = types.CallbackQuery(
-        id=callback.id,
-        from_user=callback.from_user,
-        chat_instance=callback.chat_instance,
-        data=f"select_wallet_0"
-    )
-    await wallet_selected(callback, state)
-
-
-@dp.callback_query(F.data == "back_to_minamount")
-async def back_to_minamount(callback: CallbackQuery, state: FSMContext):
-    data = await state.get_data()
-    duration = data.get("duration", 3600)
-    fake_callback_data = f"duration_{duration}"
-    callback.data = fake_callback_data
-    await duration_selected(callback, state)
-
-
-@dp.callback_query(F.data == "back_to_firstbet")
-async def back_to_firstbet(callback: CallbackQuery, state: FSMContext):
-    data = await state.get_data()
-    min_amount = data.get("min_amount", 1)
-    fake_callback_data = f"minamount_{min_amount}"
-    callback.data = fake_callback_data
-    await min_amount_selected(callback, state)
-
-
 async def main():
     try:
         await users_sql.create_tables()
