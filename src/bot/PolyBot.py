@@ -1004,11 +1004,11 @@ async def show_track_settings_menu(message, state: FSMContext):
     await message.edit_text(text, parse_mode="Markdown", reply_markup=kb)
 
 
-# ============== COPY TRADE START FLOW ==============
+# ============== COPY TRADE START ==============
 
 @dp.callback_query(F.data == "start_copy_trade")
 async def start_copy_trade_flow(callback: CallbackQuery, state: FSMContext):
-    """Начало процесса настройки copy-trade"""
+    """Начало быстрой настройки copy-trade через inline кнопки"""
     tg_id = callback.from_user.id
     track_addresses = await users_sql.get_track_wallets(tg_id)
     
@@ -1026,312 +1026,407 @@ async def start_copy_trade_flow(callback: CallbackQuery, state: FSMContext):
         await callback.answer()
         return
     
+    await state.update_data(
+        track_addresses=track_addresses,
+        selected_wallet=None,
+        duration=3600,  
+        min_amount=5,
+        first_bet=False,
+        min_quote=0.01,
+        max_quote=1.0,
+        margin_amount=10
+    )
+    
+    await show_quick_setup_menu(callback.message, state)
+    await callback.answer()
+
+
+async def show_quick_setup_menu(message, state: FSMContext):
+    """Показывает меню быстрой настройки со всеми параметрами"""
+    data = await state.get_data()
+    track_addresses = data.get("track_addresses", [])
+    
+    selected_wallet = data.get("selected_wallet")
+    duration = data.get("duration", 3600)
+    min_amount = data.get("min_amount", 5)
+    first_bet = data.get("first_bet", False)
+    min_quote = data.get("min_quote", 0.01)
+    max_quote = data.get("max_quote", 1.0)
+    margin_amount = data.get("margin_amount", 10)
+    
+    duration_text = f"{duration // 60} мин" if duration < 3600 else f"{duration // 3600} ч"
+    first_bet_text = "✅ Да" if first_bet else "❌ Нет"
+    
+    wallet_text = "Не выбран"
+    if selected_wallet:
+        try:
+            scrapper = PolyScrapper(selected_wallet)
+            lead_data = await scrapper.check_leaderboard()
+            name = lead_data.get('userName', 'Unknown') if isinstance(lead_data, dict) else 'Unknown'
+            wallet_text = f"{name} ({selected_wallet[:6]}...)"
+        except:
+            wallet_text = f"{selected_wallet[:6]}...{selected_wallet[-4:]}"
+    
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(
+                text=f"👛 Кошелек: {wallet_text}",
+                callback_data="quick_select_wallet"
+            )],
+            [InlineKeyboardButton(
+                text=f"⏱ Длительность: {duration_text}",
+                callback_data="quick_duration"
+            )],
+            [InlineKeyboardButton(
+                text=f"💰 Мин. сумма: ${min_amount}",
+                callback_data="quick_min_amount"
+            )],
+            [InlineKeyboardButton(
+                text=f"🎯 Первые ставки: {first_bet_text}",
+                callback_data="quick_first_bet"
+            )],
+            [InlineKeyboardButton(
+                text=f"📊 Котировки: {min_quote} - {max_quote}",
+                callback_data="quick_quotes"
+            )],
+            [InlineKeyboardButton(
+                text=f"💵 Маржа: ${margin_amount}",
+                callback_data="quick_margin"
+            )],
+            [InlineKeyboardButton(
+                text="🚀 Запустить мониторинг",
+                callback_data="quick_start_monitoring"
+            )],
+            [InlineKeyboardButton(
+                text="⬅️ Назад",
+                callback_data="copy_trade_back"
+            )]
+        ]
+    )
+    
+    text = (
+        "⚙️ **Быстрая настройка Copy-Trade**\n\n"
+        "Нажмите на параметр, чтобы изменить его:\n\n"
+        f"👛 **Кошелек:** {wallet_text}\n"
+        f"⏱ **Длительность:** {duration_text}\n"
+        f"💰 **Мин. сумма ставки:** ${min_amount}\n"
+        f"🎯 **Только первые ставки:** {first_bet_text}\n"
+        f"📊 **Диапазон котировок:** {min_quote} - {max_quote}\n"
+        f"💵 **Маржа на сделку:** ${margin_amount}\n\n"
+        f"Когда всё готово - нажмите '🚀 Запустить мониторинг'"
+    )
+    
+    await message.edit_text(text, parse_mode="Markdown", reply_markup=kb)
+
+
+
+@dp.callback_query(F.data == "quick_select_wallet")
+async def quick_select_wallet(callback: CallbackQuery, state: FSMContext):
+    """Выбор кошелька"""
+    data = await state.get_data()
+    track_addresses = data.get("track_addresses", [])
+    
     keyboard = []
     for i, address in enumerate(track_addresses):
-        scrapper = PolyScrapper(address)
-        lead_data = await scrapper.check_leaderboard()
-        name = lead_data.get('userName', 'Unknown') if isinstance(lead_data, dict) else 'Unknown'
+        try:
+            scrapper = PolyScrapper(address)
+            lead_data = await scrapper.check_leaderboard()
+            name = lead_data.get('userName', 'Unknown') if isinstance(lead_data, dict) else 'Unknown'
+        except:
+            name = 'Unknown'
         
         keyboard.append([InlineKeyboardButton(
             text=f"{name} ({address[:6]}...{address[-4:]})",
-            callback_data=f"select_wallet_{i}"
+            callback_data=f"qw_{i}"  # qw = quick wallet
         )])
     
-    keyboard.append([InlineKeyboardButton(text="⬅️ Назад", callback_data="copy_trade_back")])
+    keyboard.append([InlineKeyboardButton(text="⬅️ Назад", callback_data="quick_back")])
     
     kb = InlineKeyboardMarkup(inline_keyboard=keyboard)
     
-    # Сохраняем список адресов в состояние
-    await state.update_data(track_addresses=track_addresses)
-    await state.set_state(CopyTradeState.selecting_wallet)
-    
     await callback.message.edit_text(
-        "👛 **Выберите кошелек для мониторинга:**\n\n"
-        "Выберите кошелек, сделки которого вы хотите копировать.",
+        "👛 **Выберите кошелек для мониторинга:**",
         parse_mode="Markdown",
         reply_markup=kb
     )
     await callback.answer()
 
 
-@dp.callback_query(F.data.startswith("select_wallet_"))
-async def wallet_selected(callback: CallbackQuery, state: FSMContext):
-    """Обработка выбора кошелька"""
+@dp.callback_query(F.data.startswith("qw_"))
+async def quick_wallet_selected(callback: CallbackQuery, state: FSMContext):
+    """Сохранение выбранного кошелька"""
     wallet_index = int(callback.data.split("_")[-1])
     data = await state.get_data()
     track_addresses = data.get("track_addresses", [])
     
-    if wallet_index >= len(track_addresses):
-        await callback.answer("❌ Ошибка выбора кошелька", show_alert=True)
-        return
+    if wallet_index < len(track_addresses):
+        await state.update_data(selected_wallet=track_addresses[wallet_index])
+        await callback.answer("✅ Кошелек выбран")
     
-    selected_wallet = track_addresses[wallet_index]
-    await state.update_data(selected_wallet=selected_wallet)
-    
-    # Переходим к выбору длительности
+    await show_quick_setup_menu(callback.message, state)
+
+
+@dp.callback_query(F.data == "quick_duration")
+async def quick_duration(callback: CallbackQuery, state: FSMContext):
+    """Выбор длительности"""
     kb = InlineKeyboardMarkup(
         inline_keyboard=[
             [
-                InlineKeyboardButton(text="5 мин", callback_data="duration_300"),
-                InlineKeyboardButton(text="15 мин", callback_data="duration_900")
+                InlineKeyboardButton(text="5 мин", callback_data="qd_300"),
+                InlineKeyboardButton(text="15 мин", callback_data="qd_900")
             ],
             [
-                InlineKeyboardButton(text="30 мин", callback_data="duration_1800"),
-                InlineKeyboardButton(text="1 час", callback_data="duration_3600")
+                InlineKeyboardButton(text="30 мин", callback_data="qd_1800"),
+                InlineKeyboardButton(text="1 час", callback_data="qd_3600")
             ],
             [
-                InlineKeyboardButton(text="2 часа", callback_data="duration_7200"),
-                InlineKeyboardButton(text="6 часов", callback_data="duration_21600")
+                InlineKeyboardButton(text="2 часа", callback_data="qd_7200"),
+                InlineKeyboardButton(text="6 часов", callback_data="qd_21600")
             ],
             [
-                InlineKeyboardButton(text="12 часов", callback_data="duration_43200"),
-                InlineKeyboardButton(text="24 часа", callback_data="duration_86400")
+                InlineKeyboardButton(text="12 часов", callback_data="qd_43200"),
+                InlineKeyboardButton(text="24 часа", callback_data="qd_86400")
             ],
-            [InlineKeyboardButton(text="⬅️ Назад", callback_data="start_copy_trade")]
+            [InlineKeyboardButton(text="⬅️ Назад", callback_data="quick_back")]
         ]
     )
     
-    await state.set_state(CopyTradeState.setting_duration)
-    
     await callback.message.edit_text(
-        f"✅ Выбран кошелек: `{selected_wallet}`\n\n"
-        f"⏱ **Выберите длительность мониторинга:**",
+        "⏱ **Выберите длительность мониторинга:**",
         parse_mode="Markdown",
         reply_markup=kb
     )
     await callback.answer()
 
 
-@dp.callback_query(F.data.startswith("duration_"))
-async def duration_selected(callback: CallbackQuery, state: FSMContext):
-    """Обработка выбора длительности"""
+@dp.callback_query(F.data.startswith("qd_"))
+async def quick_duration_selected(callback: CallbackQuery, state: FSMContext):
+    """Сохранение длительности"""
     duration = int(callback.data.split("_")[-1])
     await state.update_data(duration=duration)
     
+    duration_text = f"{duration // 60} мин" if duration < 3600 else f"{duration // 3600} ч"
+    await callback.answer(f"✅ Длительность: {duration_text}")
+    
+    await show_quick_setup_menu(callback.message, state)
+
+
+@dp.callback_query(F.data == "quick_min_amount")
+async def quick_min_amount(callback: CallbackQuery, state: FSMContext):
+    """Выбор минимальной суммы"""
     kb = InlineKeyboardMarkup(
         inline_keyboard=[
             [
-                InlineKeyboardButton(text="$1", callback_data="minamount_1"),
-                InlineKeyboardButton(text="$5", callback_data="minamount_5"),
-                InlineKeyboardButton(text="$10", callback_data="minamount_10")
+                InlineKeyboardButton(text="$1", callback_data="qa_1"),
+                InlineKeyboardButton(text="$5", callback_data="qa_5"),
+                InlineKeyboardButton(text="$10", callback_data="qa_10")
             ],
             [
-                InlineKeyboardButton(text="$25", callback_data="minamount_25"),
-                InlineKeyboardButton(text="$50", callback_data="minamount_50"),
-                InlineKeyboardButton(text="$100", callback_data="minamount_100")
+                InlineKeyboardButton(text="$25", callback_data="qa_25"),
+                InlineKeyboardButton(text="$50", callback_data="qa_50"),
+                InlineKeyboardButton(text="$100", callback_data="qa_100")
             ],
             [
-                InlineKeyboardButton(text="$250", callback_data="minamount_250"),
-                InlineKeyboardButton(text="$500", callback_data="minamount_500")
+                InlineKeyboardButton(text="$250", callback_data="qa_250"),
+                InlineKeyboardButton(text="$500", callback_data="qa_500")
             ],
-            [InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_wallet_select")]
+            [InlineKeyboardButton(text="⬅️ Назад", callback_data="quick_back")]
         ]
     )
     
-    await state.set_state(CopyTradeState.setting_min_amount)
-    
-    duration_text = f"{duration // 60} мин" if duration < 3600 else f"{duration // 3600} ч"
-    
     await callback.message.edit_text(
-        f"⏱ Длительность: **{duration_text}**\n\n"
-        f"💰 **Выберите минимальную сумму ставки:**",
+        "💰 **Выберите минимальную сумму ставки:**\n"
+        "(Ставки меньше этой суммы будут игнорироваться)",
         parse_mode="Markdown",
         reply_markup=kb
     )
     await callback.answer()
 
 
-@dp.callback_query(F.data.startswith("minamount_"))
-async def min_amount_selected(callback: CallbackQuery, state: FSMContext):
-    """Обработка выбора минимальной суммы"""
+@dp.callback_query(F.data.startswith("qa_"))
+async def quick_amount_selected(callback: CallbackQuery, state: FSMContext):
+    """Сохранение минимальной суммы"""
     min_amount = float(callback.data.split("_")[-1])
     await state.update_data(min_amount=min_amount)
+    await callback.answer(f"✅ Мин. сумма: ${min_amount}")
     
+    await show_quick_setup_menu(callback.message, state)
+
+
+@dp.callback_query(F.data == "quick_first_bet")
+async def quick_first_bet(callback: CallbackQuery, state: FSMContext):
+    """Переключение фильтра первых ставок"""
+    data = await state.get_data()
+    current = data.get("first_bet", False)
+    new_value = not current
+    
+    await state.update_data(first_bet=new_value)
+    
+    text = "✅ Теперь копируются только первые ставки" if new_value else "❌ Копируются все ставки"
+    await callback.answer(text)
+    
+    await show_quick_setup_menu(callback.message, state)
+
+
+@dp.callback_query(F.data == "quick_quotes")
+async def quick_quotes(callback: CallbackQuery, state: FSMContext):
+    """Выбор диапазона котировок"""
     kb = InlineKeyboardMarkup(
         inline_keyboard=[
-            [
-                InlineKeyboardButton(text="✅ Да", callback_data="firstbet_true"),
-                InlineKeyboardButton(text="❌ Нет", callback_data="firstbet_false")
-            ],
-            [InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_duration")]
+            [InlineKeyboardButton(text="📊 Широкий (0.01 - 1.0)", callback_data="qq_0.01_1.0")],
+            [InlineKeyboardButton(text="📊 Средний (0.1 - 0.9)", callback_data="qq_0.1_0.9")],
+            [InlineKeyboardButton(text="📊 Узкий (0.2 - 0.8)", callback_data="qq_0.2_0.8")],
+            [InlineKeyboardButton(text="📊 Безопасный (0.3 - 0.7)", callback_data="qq_0.3_0.7")],
+            [InlineKeyboardButton(text="✏️ Настроить вручную", callback_data="qq_custom")],
+            [InlineKeyboardButton(text="⬅️ Назад", callback_data="quick_back")]
         ]
     )
     
-    await state.set_state(CopyTradeState.setting_first_bet)
-    
     await callback.message.edit_text(
-        f"💰 Минимальная сумма: **${min_amount}**\n\n"
-        f"🎯 **Копировать только первые ставки на рынок?**\n"
-        f"(Если да, то будут копироваться только ставки, которые являются первыми на конкретный рынок)",
+        "📊 **Выберите диапазон котировок:**\n\n"
+        "• **Широкий** - копирует почти все ставки\n"
+        "• **Средний** - исключает крайние значения\n"
+        "• **Узкий** - только умеренные котировки\n"
+        "• **Безопасный** - самые сбалансированные ставки",
         parse_mode="Markdown",
         reply_markup=kb
     )
     await callback.answer()
 
 
-@dp.callback_query(F.data.startswith("firstbet_"))
-async def first_bet_selected(callback: CallbackQuery, state: FSMContext):
-    """Обработка выбора фильтра первой ставки"""
-    first_bet = callback.data.split("_")[-1] == "true"
-    await state.update_data(first_bet=first_bet)
+@dp.callback_query(F.data.startswith("qq_"))
+async def quick_quotes_selected(callback: CallbackQuery, state: FSMContext):
+    """Сохранение диапазона котировок"""
+    if callback.data == "qq_custom":
+        data = await state.get_data()
+        await state.set_state(CopyTradeState.setting_min_quote)
+        
+        kb = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(text="0.01", callback_data="minquote_0.01"),
+                    InlineKeyboardButton(text="0.05", callback_data="minquote_0.05"),
+                    InlineKeyboardButton(text="0.10", callback_data="minquote_0.10")
+                ],
+                [
+                    InlineKeyboardButton(text="0.20", callback_data="minquote_0.20"),
+                    InlineKeyboardButton(text="0.30", callback_data="minquote_0.30"),
+                    InlineKeyboardButton(text="0.40", callback_data="minquote_0.40")
+                ],
+                [InlineKeyboardButton(text="⬅️ Назад", callback_data="quick_back")]
+            ]
+        )
+        
+        await callback.message.edit_text(
+            "📊 **Выберите минимальную котировку:**",
+            parse_mode="Markdown",
+            reply_markup=kb
+        )
+        await callback.answer()
+        return
     
+    quotes = callback.data.replace("qq_", "").split("_")
+    min_quote = float(quotes[0])
+    max_quote = float(quotes[1])
+    
+    await state.update_data(min_quote=min_quote, max_quote=max_quote)
+    await callback.answer(f"✅ Котировки: {min_quote} - {max_quote}")
+    
+    await show_quick_setup_menu(callback.message, state)
+
+
+@dp.callback_query(F.data == "quick_margin")
+async def quick_margin(callback: CallbackQuery, state: FSMContext):
+    """Выбор маржи"""
     kb = InlineKeyboardMarkup(
         inline_keyboard=[
             [
-                InlineKeyboardButton(text="0.01", callback_data="minquote_0.01"),
-                InlineKeyboardButton(text="0.05", callback_data="minquote_0.05"),
-                InlineKeyboardButton(text="0.10", callback_data="minquote_0.10")
+                InlineKeyboardButton(text="$5", callback_data="qm_5"),
+                InlineKeyboardButton(text="$10", callback_data="qm_10"),
+                InlineKeyboardButton(text="$25", callback_data="qm_25")
             ],
             [
-                InlineKeyboardButton(text="0.20", callback_data="minquote_0.20"),
-                InlineKeyboardButton(text="0.30", callback_data="minquote_0.30"),
-                InlineKeyboardButton(text="0.40", callback_data="minquote_0.40")
+                InlineKeyboardButton(text="$50", callback_data="qm_50"),
+                InlineKeyboardButton(text="$100", callback_data="qm_100"),
+                InlineKeyboardButton(text="$250", callback_data="qm_250")
             ],
             [
-                InlineKeyboardButton(text="0.50", callback_data="minquote_0.50"),
-                InlineKeyboardButton(text="0.60", callback_data="minquote_0.60")
+                InlineKeyboardButton(text="$500", callback_data="qm_500"),
+                InlineKeyboardButton(text="$1000", callback_data="qm_1000")
             ],
-            [InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_minamount")]
+            [InlineKeyboardButton(text="✏️ Ввести свою сумму", callback_data="qm_custom")],
+            [InlineKeyboardButton(text="⬅️ Назад", callback_data="quick_back")]
         ]
     )
     
-    await state.set_state(CopyTradeState.setting_min_quote)
-    
-    first_bet_text = "✅ Да" if first_bet else "❌ Нет"
-    
     await callback.message.edit_text(
-        f"🎯 Только первые ставки: **{first_bet_text}**\n\n"
-        f"📊 **Выберите минимальную котировку:**\n"
-        f"(Ставки с котировкой ниже этого значения будут игнорироваться)",
+        "💵 **Выберите размер маржи для каждой сделки:**\n"
+        "(Эта сумма будет использоваться для копирования сделок)",
         parse_mode="Markdown",
         reply_markup=kb
     )
     await callback.answer()
 
 
-@dp.callback_query(F.data.startswith("minquote_"))
-async def min_quote_selected(callback: CallbackQuery, state: FSMContext):
-    """Обработка выбора минимальной котировки"""
-    min_quote = float(callback.data.split("_")[-1])
-    await state.update_data(min_quote=min_quote)
+@dp.callback_query(F.data.startswith("qm_"))
+async def quick_margin_selected(callback: CallbackQuery, state: FSMContext):
+    """Сохранение маржи"""
+    if callback.data == "qm_custom":
+        kb = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text="⬅️ Назад", callback_data="quick_back")]
+            ]
+        )
+        
+        await callback.message.edit_text(
+            "✏️ **Ввод кастомной маржи**\n\n"
+            "💰 Введите сумму в долларах (USD):\n\n"
+            "Примеры: `15`, `75.5`, `333`\n\n"
+            "⚠️ Минимум: $1\n"
+            "⚠️ Максимум: $10000\n\n"
+            "Отправьте число в чат:",
+            parse_mode="Markdown",
+            reply_markup=kb
+        )
+        await state.set_state(CopyTradeState.setting_custom_margin)
+        await callback.answer()
+        return
     
-    kb = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(text="0.50", callback_data="maxquote_0.50"),
-                InlineKeyboardButton(text="0.60", callback_data="maxquote_0.60"),
-                InlineKeyboardButton(text="0.70", callback_data="maxquote_0.70")
-            ],
-            [
-                InlineKeyboardButton(text="0.80", callback_data="maxquote_0.80"),
-                InlineKeyboardButton(text="0.90", callback_data="maxquote_0.90"),
-                InlineKeyboardButton(text="0.95", callback_data="maxquote_0.95")
-            ],
-            [
-                InlineKeyboardButton(text="0.99", callback_data="maxquote_0.99"),
-                InlineKeyboardButton(text="1.00", callback_data="maxquote_1.00")
-            ],
-            [InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_firstbet")]
-        ]
-    )
+    margin_amount = float(callback.data.split("_")[-1])
+    await state.update_data(margin_amount=margin_amount)
+    await callback.answer(f"✅ Маржа: ${margin_amount}")
     
-    await state.set_state(CopyTradeState.setting_max_quote)
-    
-    await callback.message.edit_text(
-        f"📊 Минимальная котировка: **{min_quote}**\n\n"
-        f"📈 **Выберите максимальную котировку:**\n"
-        f"(Ставки с котировкой выше этого значения будут игнорироваться)",
-        parse_mode="Markdown",
-        reply_markup=kb
-    )
+    await show_quick_setup_menu(callback.message, state)
+
+
+@dp.callback_query(F.data == "quick_back")
+async def quick_back(callback: CallbackQuery, state: FSMContext):
+    """Возврат к главному меню быстрой настройки"""
+    await show_quick_setup_menu(callback.message, state)
     await callback.answer()
 
 
-@dp.callback_query(F.data.startswith("maxquote_"))
-async def max_quote_selected(callback: CallbackQuery, state: FSMContext):
-    """Обработка выбора максимальной котировки и переход к настройке маржи"""
-    max_quote = float(callback.data.split("_")[-1])
-    await state.update_data(max_quote=max_quote)
+@dp.callback_query(F.data == "quick_start_monitoring")
+async def quick_start_monitoring(callback: CallbackQuery, state: FSMContext):
+    """Запуск мониторинга из быстрой настройки"""
+    data = await state.get_data()
     
-    # Переходим к настройке маржи
-    kb = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(text="$5", callback_data="margin_5"),
-                InlineKeyboardButton(text="$10", callback_data="margin_10"),
-                InlineKeyboardButton(text="$25", callback_data="margin_25")
-            ],
-            [
-                InlineKeyboardButton(text="$50", callback_data="margin_50"),
-                InlineKeyboardButton(text="$100", callback_data="margin_100"),
-                InlineKeyboardButton(text="$250", callback_data="margin_250")
-            ],
-            [
-                InlineKeyboardButton(text="$500", callback_data="margin_500"),
-                InlineKeyboardButton(text="$1000", callback_data="margin_1000")
-            ],
-            [InlineKeyboardButton(text="✏️ Ввести свою сумму", callback_data="margin_custom")],
-            [InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_minquote")]
-        ]
-    )
+    if not data.get("selected_wallet"):
+        await callback.answer("❌ Выберите кошелек!", show_alert=True)
+        return
     
-    await state.set_state(CopyTradeState.setting_margin)
-    
-    await callback.message.edit_text(
-        f"📈 Максимальная котировка: **{max_quote}**\n\n"
-        f"💰 **Выберите размер маржи для каждой сделки:**\n"
-        f"(Эта сумма будет использоваться для копирования сделок)\n\n"
-        f"💡 Вы также можете ввести свою сумму",
-        parse_mode="Markdown",
-        reply_markup=kb
-    )
-    await callback.answer()
-
-
-@dp.callback_query(F.data == "margin_custom")
-async def margin_custom_prompt(callback: CallbackQuery, state: FSMContext):
-    """Запрос на ввод кастомной маржи"""
-    kb = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="⬅️ Назад к выбору", callback_data="back_to_margin_select")]
-        ]
-    )
-    
-    await callback.message.edit_text(
-        "✏️ **Ввод кастомной маржи**\n\n"
-        "💰 Введите сумму в долларах (USD):\n\n"
-        "Примеры:\n"
-        "• `15` - пятнадцать долларов\n"
-        "• `75.5` - семьдесят пять долларов и 50 центов\n"
-        "• `333` - триста тридцать три доллара\n\n"
-        "⚠️ **Минимум:** $1\n"
-        "⚠️ **Максимум:** $10000\n\n"
-        "Отправьте число в чат:",
-        parse_mode="Markdown",
-        reply_markup=kb
-    )
-    await state.set_state(CopyTradeState.setting_custom_margin)
-    await callback.answer()
+    await confirm_and_start_monitoring(callback, state)
 
 
 @dp.message(CopyTradeState.setting_custom_margin)
-async def custom_margin_input(message: types.Message, state: FSMContext):
-    """Обработка введенной кастомной маржи"""
+async def quick_custom_margin_input(message: types.Message, state: FSMContext):
+    """Обработка кастомной маржи в быстрой настройке"""
     try:
         margin_amount = float(message.text.strip().replace(',', '.'))
         
-        if margin_amount < 1:
+        if margin_amount < 1 or margin_amount > 10000:
             await message.answer(
-                "⚠️ Сумма слишком маленькая!\n"
-                "Минимальная маржа: $1\n\n"
-                "Попробуйте снова:"
-            )
-            return
-        
-        if margin_amount > 10000:
-            await message.answer(
-                "⚠️ Сумма слишком большая!\n"
-                "Максимальная маржа: $10000\n\n"
+                "⚠️ Сумма должна быть от $1 до $10000!\n"
                 "Попробуйте снова:"
             )
             return
@@ -1342,108 +1437,67 @@ async def custom_margin_input(message: types.Message, state: FSMContext):
             pass
         
         await state.update_data(margin_amount=margin_amount)
-        
-        data = await state.get_data()
-        
-        selected_wallet = data.get("selected_wallet", "")
-        duration = data.get("duration", 0)
-        min_amount = data.get("min_amount", 0)
-        first_bet = data.get("first_bet", False)
-        min_quote = data.get("min_quote", 0)
-        max_quote = data.get("max_quote", 1)
-        
-        duration_text = f"{duration // 60} мин" if duration < 3600 else f"{duration // 3600} ч"
-        first_bet_text = "✅ Да" if first_bet else "❌ Нет"
-        
-        kb = InlineKeyboardMarkup(
-            inline_keyboard=[
-                [InlineKeyboardButton(text="🚀 Запустить мониторинг", callback_data="confirm_start_monitoring")],
-                [InlineKeyboardButton(text="🔄 Изменить настройки", callback_data="start_copy_trade")],
-                [InlineKeyboardButton(text="⬅️ Отмена", callback_data="copy_trade_back")]
-            ]
+        await state.clear()  
+
+        await message.answer(
+            f"✅ Маржа установлена: ${margin_amount}\n\n"
+            "Возвращаюсь к настройкам..."
         )
         
-        await state.set_state(CopyTradeState.confirming_settings)
-        
-        text = (
-            "📋 **Итоговые настройки мониторинга:**\n\n"
-            f"👛 Кошелек: `{selected_wallet[:8]}...{selected_wallet[-6:]}`\n"
-            f"⏱ Длительность: **{duration_text}**\n"
-            f"💰 Мин. сумма: **${min_amount}**\n"
-            f"🎯 Только первые ставки: **{first_bet_text}**\n"
-            f"📊 Котировки: **{min_quote} - {max_quote}**\n"
-            f"💵 Маржа на сделку: **${margin_amount}** ✏️\n\n"
-            f"⚠️ При нахождении подходящей сделки, она будет автоматически исполнена!\n\n"
-            f"Всё верно? Нажмите '🚀 Запустить мониторинг'"
-        )
-        
-        await message.answer(text, parse_mode="Markdown", reply_markup=kb)
+        await show_quick_setup_menu_new_message(message, state)
         
     except ValueError:
         await message.answer(
-            "⚠️ Неверный формат!\n\n"
-            "Введите число (например: 15 или 75.5)\n"
-            "Попробуйте снова:"
+            "⚠️ Неверный формат! Введите число (например: 15 или 75.5)"
         )
 
 
-@dp.callback_query(F.data == "back_to_margin_select")
-async def back_to_margin_select(callback: CallbackQuery, state: FSMContext):
-    """Возврат к выбору предустановленной маржи"""
+async def show_quick_setup_menu_new_message(message, state: FSMContext):
+    """Показывает меню быстрой настройки в новом сообщении"""
     data = await state.get_data()
-    max_quote = data.get("max_quote", 0.99)
+    track_addresses = data.get("track_addresses", [])
     
-    # Эмулируем выбор max_quote заново
-    fake_data = f"maxquote_{max_quote}"
-    callback.data = fake_data
-    await max_quote_selected(callback, state)
-
-
-@dp.callback_query(F.data.startswith("margin_"))
-async def margin_selected(callback: CallbackQuery, state: FSMContext):
-    """Обработка выбора размера маржи и показ итоговой настройки"""
-    if callback.data == "margin_custom":
-        return
-    
-    margin_amount = float(callback.data.split("_")[-1])
-    await state.update_data(margin_amount=margin_amount)
-    
-    data = await state.get_data()
-    
-    selected_wallet = data.get("selected_wallet", "")
-    duration = data.get("duration", 0)
-    min_amount = data.get("min_amount", 0)
+    selected_wallet = data.get("selected_wallet")
+    duration = data.get("duration", 3600)
+    min_amount = data.get("min_amount", 5)
     first_bet = data.get("first_bet", False)
-    min_quote = data.get("min_quote", 0)
-    max_quote = data.get("max_quote", 1)
+    min_quote = data.get("min_quote", 0.01)
+    max_quote = data.get("max_quote", 1.0)
+    margin_amount = data.get("margin_amount", 10)
     
     duration_text = f"{duration // 60} мин" if duration < 3600 else f"{duration // 3600} ч"
     first_bet_text = "✅ Да" if first_bet else "❌ Нет"
     
+    wallet_text = "Не выбран"
+    if selected_wallet:
+        wallet_text = f"{selected_wallet[:6]}...{selected_wallet[-4:]}"
+    
     kb = InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="🚀 Запустить мониторинг", callback_data="confirm_start_monitoring")],
-            [InlineKeyboardButton(text="🔄 Изменить настройки", callback_data="start_copy_trade")],
-            [InlineKeyboardButton(text="⬅️ Отмена", callback_data="copy_trade_back")]
+            [InlineKeyboardButton(text=f"👛 Кошелек: {wallet_text}", callback_data="quick_select_wallet")],
+            [InlineKeyboardButton(text=f"⏱ Длительность: {duration_text}", callback_data="quick_duration")],
+            [InlineKeyboardButton(text=f"💰 Мин. сумма: ${min_amount}", callback_data="quick_min_amount")],
+            [InlineKeyboardButton(text=f"🎯 Первые ставки: {first_bet_text}", callback_data="quick_first_bet")],
+            [InlineKeyboardButton(text=f"📊 Котировки: {min_quote} - {max_quote}", callback_data="quick_quotes")],
+            [InlineKeyboardButton(text=f"💵 Маржа: ${margin_amount}", callback_data="quick_margin")],
+            [InlineKeyboardButton(text="🚀 Запустить мониторинг", callback_data="quick_start_monitoring")],
+            [InlineKeyboardButton(text="⬅️ Назад", callback_data="copy_trade_back")]
         ]
     )
     
-    await state.set_state(CopyTradeState.confirming_settings)
-    
     text = (
-        "📋 **Итоговые настройки мониторинга:**\n\n"
-        f"👛 Кошелек: `{selected_wallet[:8]}...{selected_wallet[-6:]}`\n"
-        f"⏱ Длительность: **{duration_text}**\n"
-        f"💰 Мин. сумма: **${min_amount}**\n"
-        f"🎯 Только первые ставки: **{first_bet_text}**\n"
-        f"📊 Котировки: **{min_quote} - {max_quote}**\n"
-        f"💵 Маржа на сделку: **${margin_amount}**\n\n"
-        f"⚠️ При нахождении подходящей сделки, она будет автоматически исполнена!\n\n"
-        f"Всё верно? Нажмите '🚀 Запустить мониторинг'"
+        "⚙️ **Быстрая настройка Copy-Trade**\n\n"
+        "Нажмите на параметр, чтобы изменить его:\n\n"
+        f"👛 **Кошелек:** {wallet_text}\n"
+        f"⏱ **Длительность:** {duration_text}\n"
+        f"💰 **Мин. сумма ставки:** ${min_amount}\n"
+        f"🎯 **Только первые ставки:** {first_bet_text}\n"
+        f"📊 **Диапазон котировок:** {min_quote} - {max_quote}\n"
+        f"💵 **Маржа на сделку:** ${margin_amount}\n\n"
+        f"Когда всё готово - нажмите '🚀 Запустить мониторинг'"
     )
     
-    await callback.message.edit_text(text, parse_mode="Markdown", reply_markup=kb)
-    await callback.answer()
+    await message.answer(text, parse_mode="Markdown", reply_markup=kb)
 
 
 @dp.callback_query(F.data == "confirm_start_monitoring")
@@ -1552,7 +1606,6 @@ async def _start_monitoring_task(callback, state, tg_id, data, private_key, user
         api_passphrase=api_passphrase if api_enabled else None
     )
 
-    # === CALLBACK ДЛЯ УВЕДОМЛЕНИЙ ===
     async def notify_found_position(position: Position, message: str, trade_executed: bool, trade_message: str):
         emoji = "✅" if trade_executed else "⏳"
         status = "Сделка исполнена!" if trade_executed else (
