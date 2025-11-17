@@ -9,3 +9,6 @@ class Settings(BaseModel):
 
     min_quote: float          # минимальная цена котировки рынка
     max_quote: float          # максимальная цена котировки рынка
+
+    sl_percent: float = None   # Stop_loss: например -25%
+    tp_percent: float = None   # Take_profit: например +40%

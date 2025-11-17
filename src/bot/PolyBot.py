@@ -1053,6 +1053,9 @@ async def show_quick_setup_menu(message, state: FSMContext):
     min_quote = data.get("min_quote", 0.01)
     max_quote = data.get("max_quote", 1.0)
     margin_amount = data.get("margin_amount", 10)
+
+    sl_percent = data.get("sl_percent", 30)
+    tp_percent = data.get("tp_percent", 50)
     
     duration_text = f"{duration // 60} мин" if duration < 3600 else f"{duration // 3600} ч"
     first_bet_text = "✅ Да" if first_bet else "❌ Нет"
@@ -1093,6 +1096,16 @@ async def show_quick_setup_menu(message, state: FSMContext):
                 text=f"💵 Маржа: ${margin_amount}",
                 callback_data="quick_margin"
             )],
+
+            [InlineKeyboardButton(
+                text=f"🛑 SL (%): {sl_percent}%",
+                callback_data="quick_sl"
+            )],
+            [InlineKeyboardButton(
+                text=f"🎯 TP (%): {tp_percent}%",
+                callback_data="quick_tp"
+            )],
+
             [InlineKeyboardButton(
                 text="🚀 Запустить мониторинг",
                 callback_data="quick_start_monitoring"
@@ -1112,12 +1125,87 @@ async def show_quick_setup_menu(message, state: FSMContext):
         f"💰 **Мин. сумма ставки:** ${min_amount}\n"
         f"🎯 **Только первые ставки:** {first_bet_text}\n"
         f"📊 **Диапазон котировок:** {min_quote} - {max_quote}\n"
-        f"💵 **Маржа на сделку:** ${margin_amount}\n\n"
-        f"Когда всё готово - нажмите '🚀 Запустить мониторинг'"
+        f"💵 **Маржа на сделку:** ${margin_amount}\n"
+        f"🛑 **Stop Loss:** {sl_percent}%\n"
+        f"🎯 **Take Profit:** {tp_percent}%\n\n"
+        f"Когда всё готово — нажмите '🚀 Запустить мониторинг'"
     )
     
+
     await message.edit_text(text, parse_mode="Markdown", reply_markup=kb)
 
+@dp.callback_query(F.data == "quick_sl")
+async def quick_sl_menu(callback: CallbackQuery, state: FSMContext):
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="10%", callback_data="set_sl_10"),
+                InlineKeyboardButton(text="20%", callback_data="set_sl_20"),
+                InlineKeyboardButton(text="30%", callback_data="set_sl_30"),
+            ],
+            [
+                InlineKeyboardButton(text="40%", callback_data="set_sl_40"),
+                InlineKeyboardButton(text="50%", callback_data="set_sl_50"),
+                InlineKeyboardButton(text="75%", callback_data="set_sl_75"),
+            ],
+            [
+                InlineKeyboardButton(text="100%", callback_data="set_sl_100")
+            ],
+            [
+                InlineKeyboardButton(text="⬅️ Назад", callback_data="quick_setup_back")
+            ]
+        ]
+    )
+
+    await callback.message.edit_text(
+        "🛑 **Выберите Stop Loss (%)**",
+        parse_mode="Markdown",
+        reply_markup=kb
+    )
+
+
+@dp.callback_query(F.data == "quick_tp")
+async def quick_tp_menu(callback: CallbackQuery, state: FSMContext):
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="10%", callback_data="set_tp_10"),
+                InlineKeyboardButton(text="20%", callback_data="set_tp_20"),
+                InlineKeyboardButton(text="30%", callback_data="set_tp_30"),
+            ],
+            [
+                InlineKeyboardButton(text="40%", callback_data="set_tp_40"),
+                InlineKeyboardButton(text="50%", callback_data="set_tp_50"),
+                InlineKeyboardButton(text="75%", callback_data="set_tp_75"),
+            ],
+            [
+                InlineKeyboardButton(text="100%", callback_data="set_tp_100")
+            ],
+            [
+                InlineKeyboardButton(text="⬅️ Назад", callback_data="quick_setup_back")
+            ]
+        ]
+    )
+
+    await callback.message.edit_text(
+        "🎯 **Выберите Take Profit (%)**",
+        parse_mode="Markdown",
+        reply_markup=kb
+    )
+
+@dp.callback_query(F.data.startswith("set_sl_"))
+async def set_sl(callback: CallbackQuery, state: FSMContext):
+    value = int(callback.data.split("_")[2])
+    await state.update_data(sl_percent=value)
+
+    await show_quick_setup_menu(callback.message, state)
+
+@dp.callback_query(F.data.startswith("set_tp_"))
+async def set_tp(callback: CallbackQuery, state: FSMContext):
+    value = int(callback.data.split("_")[2])
+    await state.update_data(tp_percent=value)
+
+    await show_quick_setup_menu(callback.message, state)
 
 
 @dp.callback_query(F.data == "quick_select_wallet")
@@ -1692,7 +1780,6 @@ async def _start_monitoring_task(callback, state, tg_id, data, private_key, user
     task = asyncio.create_task(run_monitoring())
     active_monitors[tg_id] = task
 
-    # === UI ===
     kb = InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="🛑 Остановить мониторинг", callback_data="stop_monitoring")],
@@ -1804,6 +1891,10 @@ async def show_monitoring_stats(callback: CallbackQuery):
 @dp.callback_query(F.data == "back_to_wallet_select")
 async def back_to_wallet_select(callback: CallbackQuery, state: FSMContext):
     await start_copy_trade_flow(callback, state)
+
+@dp.callback_query(F.data == "quick_setup_back")
+async def quick_back(callback: CallbackQuery, state: FSMContext):
+    await show_quick_setup_menu(callback.message, state)
 
 
 async def main():
