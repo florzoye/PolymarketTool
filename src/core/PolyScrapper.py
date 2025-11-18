@@ -111,11 +111,12 @@ class PolyScrapper:
                             "curPrice": pos.get("curPrice"),
                             "title": pos.get("title"),
                             "currentValue": pos.get("currentValue"),
+                            "asset": pos.get('asset')
                         })
         return all_positions
     
 
-    async def get_last_bets(self) -> List[Position]:  
+    async def get_last_bets(self, max_age: int | None = 2) -> List[Position]:  
         """
         Получает последние ставки (ТОЛЬКО ПОКУПКИ, НЕ СТАРШЕ 2 минут)
         Возвращает список Position объектов
@@ -144,7 +145,7 @@ class PolyScrapper:
                     bet_time = int(pos.get('timestamp', 0))
                     age_minutes = (current_time - bet_time) / 60
                     
-                    if age_minutes > 2 or pos.get('side') != 'BUY':
+                    if age_minutes > max_age or pos.get('side') != 'BUY':
                         continue
                     
                     filtered_bets.append(
@@ -190,3 +191,11 @@ class PolyScrapper:
                     CustomPrint().error(f"⚠️ {response.status}")
                     return None
             return round((await response.json())[0]['value'], 3)
+
+async def main():
+    adre = '0xD289B54Aa8849C5cc146899a4C56910e7eC2d0BC'
+    ins = PolyScrapper(adre)
+    print(await ins.get_account_positions())
+
+if __name__ == '__main__':
+    asyncio.run(main())

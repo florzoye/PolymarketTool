@@ -357,13 +357,12 @@ class PolyCopy:
             token_id=str(token_id),
             amount=size,
             side=SELL,
-            order_type=OrderType.FOK
         )
 
         try:
             print(f"🔁 Закрываем позицию token_id={token_id}, amount={size}")
             signed = self.client.create_market_order(mo)
-            resp = self.client.post_order(signed, OrderType.FOK)
+            resp = self.client.post_order(signed)
             print(f"✔ Позиция закрыта: {resp}")
             return True
 
@@ -376,7 +375,7 @@ class PolyCopy:
                     if refreshed:
                         try:
                             signed = self.client.create_market_order(mo)
-                            resp = self.client.post_order(signed, OrderType.FOK)
+                            resp = self.client.post_order(signed)
                             print(f"✔ Позиция закрыта после обновления ключей: {resp}")
                             return True
                         except PolyApiException as e2:

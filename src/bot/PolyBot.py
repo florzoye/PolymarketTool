@@ -260,7 +260,6 @@ async def get_api_passphrase(message: types.Message, state: FSMContext):
         await message.answer("⚠️ API Passphrase слишком короткий. Попробуйте снова:")
         return
     
-    # Получаем все данные
     data = await state.get_data()
     address = data.get("address")
     private_key = data.get("private_key")
@@ -418,7 +417,7 @@ async def show_main_menu(callback: CallbackQuery, state: FSMContext):
 
 
 @dp.callback_query(F.data == "show_positions")
-async def show_positions(callback: CallbackQuery):
+async def show_positions(callback: CallbackQuery, state: FSMContext):
     tg_id = callback.from_user.id
     address = await users_sql.select_user_address(tg_id)
 
@@ -443,10 +442,13 @@ async def show_positions(callback: CallbackQuery):
         )
         return
 
+    # Сохраняем позиции в состояние для последующего закрытия
+    await state.update_data(current_positions=positions)
+
     max_show = 10
     positions = positions[:max_show]
 
-    text = f"📊 Топ {len(positions)} позиций по адресу `{address}`:\n\n"
+    text = f"📊 **Топ {len(positions)} позиций** по адресу `{address}`:\n\n"
 
     for i, pos in enumerate(positions, 1):
         title = pos.get("title", "Без названия")
@@ -454,22 +456,257 @@ async def show_positions(callback: CallbackQuery):
         pnl = round(float(pos.get("cashPnl", 0)), 2)
         percent = round(float(pos.get("percentRealizedPnl", 0) or 0), 2)
 
+        pnl_emoji = "📈" if pnl >= 0 else "📉"
+        
         text += (
-            f"**{i}. {title}**\n"
-            f"💰 Текущая стоимость: `${current}`\n"
-            f"📈 PnL: `${pnl}` ({percent}%)\n"
+            f"**{i}. {title[:60]}**\n"
+            f"💰 Стоимость: `${current}`\n"
+            f"{pnl_emoji} PnL: `${pnl}` ({percent}%)\n"
             f"───────────────────────\n"
         )
     
     kb = InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="🔄 Обновить", callback_data="show_positions")],
+            [InlineKeyboardButton(text="❌ Закрыть позицию", callback_data="select_position_to_close")],
             [InlineKeyboardButton(text="⬅️ Главное меню", callback_data="main_menu")]
         ]
     )
     
     await callback.message.edit_text(text, parse_mode="Markdown", reply_markup=kb)
 
+
+@dp.callback_query(F.data == "select_position_to_close")
+async def select_position_to_close(callback: CallbackQuery, state: FSMContext):
+    """Показывает список позиций для закрытия"""
+    data = await state.get_data()
+    positions = data.get("current_positions", [])
+    
+    if not positions:
+        await callback.answer("❌ Нет активных позиций", show_alert=True)
+        return
+    
+    keyboard = []
+    for i, pos in enumerate(positions[:15]):  
+        title = pos.get("title", "Без названия")[:40]
+        current = round(float(pos.get("currentValue", 0)), 2)
+        pnl = round(float(pos.get("cashPnl", 0)), 2)
+        
+        pnl_emoji = "📈" if pnl >= 0 else "📉"
+        button_text = f"{pnl_emoji} {title}... (${current})"
+        
+        keyboard.append([InlineKeyboardButton(
+            text=button_text,
+            callback_data=f"close_pos_{i}"
+        )])
+    
+    keyboard.append([InlineKeyboardButton(text="⬅️ Назад", callback_data="show_positions")])
+    
+    kb = InlineKeyboardMarkup(inline_keyboard=keyboard)
+    
+    await callback.message.edit_text(
+        "❌ **Выберите позицию для закрытия:**\n\n"
+        "⚠️ **Внимание!** Закрытие позиции необратимо.\n"
+        "Убедитесь что выбрали правильную позицию.",
+        parse_mode="Markdown",
+        reply_markup=kb
+    )
+    await callback.answer()
+
+
+@dp.callback_query(F.data.startswith("close_pos_"))
+async def confirm_close_position(callback: CallbackQuery, state: FSMContext):
+    """Подтверждение закрытия позиции"""
+    pos_index = int(callback.data.split("_")[-1])
+    data = await state.get_data()
+    positions = data.get("current_positions", [])
+    
+    if pos_index >= len(positions):
+        await callback.answer("❌ Ошибка: позиция не найдена", show_alert=True)
+        return
+    
+    position = positions[pos_index]
+    title = position.get("title", "Без названия")
+    current = round(float(position.get("currentValue", 0)), 2)
+    size = float(position.get("size", 0))
+    pnl = round(float(position.get("cashPnl", 0)), 2)
+    percent = round(float(position.get("percentRealizedPnl", 0) or 0), 2)
+    
+    await state.update_data(closing_position_index=pos_index)
+    
+    pnl_emoji = "📈" if pnl >= 0 else "📉"
+    
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="✅ Да, закрыть позицию", callback_data="execute_close_position")],
+            [InlineKeyboardButton(text="❌ Отмена", callback_data="select_position_to_close")]
+        ]
+    )
+    
+    text = (
+        "⚠️ **Подтверждение закрытия позиции**\n\n"
+        f"📝 **Название:** {title}\n"
+        f"💰 **Текущая стоимость:** ${current}\n"
+        f"📊 **Размер:** {size}\n"
+        f"{pnl_emoji} **PnL:** ${pnl} ({percent}%)\n\n"
+        f"❗ Вы уверены, что хотите закрыть эту позицию?"
+    )
+    
+    await callback.message.edit_text(text, parse_mode="Markdown", reply_markup=kb)
+    await callback.answer()
+
+
+@dp.callback_query(F.data == "execute_close_position")
+async def execute_close_position(callback: CallbackQuery, state: FSMContext):
+    """Исполнение закрытия позиции"""
+    tg_id = callback.from_user.id
+    data = await state.get_data()
+    
+    pos_index = data.get("closing_position_index")
+    positions = data.get("current_positions", [])
+    
+    if pos_index is None or pos_index >= len(positions):
+        await callback.answer("❌ Ошибка: позиция не найдена", show_alert=True)
+        return
+    
+    position = positions[pos_index]
+    title = position.get("title", "Без названия")
+    
+    private_key = await users_sql.get_private_key(tg_id)
+    user_address = await users_sql.select_user_address(tg_id)
+    api_key, api_secret, api_passphrase = await users_sql.get_api_credentials(tg_id)
+    
+    if not private_key:
+        kb = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text="⬅️ Назад", callback_data="show_positions")]
+            ]
+        )
+        await callback.message.edit_text(
+            "❌ Приватный ключ не найден!\n"
+            "Для закрытия позиций нужен приватный ключ.",
+            reply_markup=kb
+        )
+        await callback.answer()
+        return
+    
+    await callback.message.edit_text(
+        f"⏳ **Закрываю позицию...**\n\n"
+        f"📝 {title}\n\n"
+        f"Пожалуйста, подождите...",
+        parse_mode="Markdown"
+    )
+    
+    try:
+        scrapper = PolyScrapper(user_address)
+        
+        temp_settings = Settings(
+            exp_at=60,
+            started_at=int(time.time()),
+            first_bet=False,
+            min_amount=1,
+            min_quote=0.01,
+            max_quote=0.99
+        )
+        
+        poly_copy = PolyCopy(
+            temp_settings,
+            scrapper,
+            private_key=private_key,
+            margin_amount=1,  # Не важно для закрытия
+            funder=user_address,
+            api_key=api_key,
+            api_secret=api_secret,
+            api_passphrase=api_passphrase
+        )
+        
+        current_positions = await scrapper.get_account_positions()
+        
+        actual_pos = next((p for p in current_positions if p.get('title') == title), None)
+        
+        if not actual_pos:
+            kb = InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [InlineKeyboardButton(text="⬅️ К позициям", callback_data="show_positions")]
+                ]
+            )
+            await callback.message.edit_text(
+                f"❌ **Позиция не найдена**\n\n"
+                f"Возможно она уже закрыта или изменилась.",
+                parse_mode="Markdown",
+                reply_markup=kb
+            )
+            await callback.answer()
+            return
+        
+        token_id = actual_pos.get('asset')
+        size = float(actual_pos.get('size'))
+        
+        if not token_id:
+            kb = InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [InlineKeyboardButton(text="⬅️ К позициям", callback_data="show_positions")]
+                ]
+            )
+            await callback.message.edit_text(
+                f"❌ **Ошибка: не найден token_id**\n\n"
+                f"Невозможно закрыть позицию без token_id.",
+                parse_mode="Markdown",
+                reply_markup=kb
+            )
+            await callback.answer()
+            return
+        
+        success = await poly_copy.close_position(token_id, size)
+        
+        kb = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text="🔄 Обновить позиции", callback_data="show_positions")],
+                [InlineKeyboardButton(text="⬅️ Главное меню", callback_data="main_menu")]
+            ]
+        )
+        
+        if success:
+            pnl = round(float(position.get("cashPnl", 0)), 2)
+            percent = round(float(position.get("percentRealizedPnl", 0) or 0), 2)
+            
+            text = (
+                f"✅ **Позиция успешно закрыта!**\n\n"
+                f"📝 {title}\n"
+                f"💰 Финальный PnL: ${pnl} ({percent}%)\n\n"
+                f"Позиция больше не отображается в вашем портфеле."
+            )
+        else:
+            text = (
+                f"❌ **Ошибка при закрытии позиции**\n\n"
+                f"📝 {title}\n\n"
+                f"Возможные причины:\n"
+                f"• Недостаточно средств\n"
+                f"• Проблемы с API\n"
+                f"• Позиция уже закрыта\n\n"
+                f"Попробуйте позже или проверьте на polymarket.com"
+            )
+        
+        await callback.message.edit_text(text, parse_mode="Markdown", reply_markup=kb)
+        await callback.answer()
+        
+    except Exception as e:
+        logging.error(f"Ошибка закрытия позиции: {e}")
+        
+        kb = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text="⬅️ К позициям", callback_data="show_positions")]
+            ]
+        )
+        
+        await callback.message.edit_text(
+            f"❌ **Произошла ошибка:**\n\n"
+            f"`{str(e)}`\n\n"
+            f"Попробуйте позже.",
+            parse_mode="Markdown",
+            reply_markup=kb
+        )
+        await callback.answer()
 
 @dp.callback_query(F.data == "show_leaderboard")
 async def show_leaderboard(callback: CallbackQuery):
@@ -1299,6 +1536,7 @@ async def quick_duration_selected(callback: CallbackQuery, state: FSMContext):
     await show_quick_setup_menu(callback.message, state)
 
 
+
 @dp.callback_query(F.data == "quick_min_amount")
 async def quick_min_amount(callback: CallbackQuery, state: FSMContext):
     """Выбор минимальной суммы"""
@@ -1318,13 +1556,15 @@ async def quick_min_amount(callback: CallbackQuery, state: FSMContext):
                 InlineKeyboardButton(text="$250", callback_data="qa_250"),
                 InlineKeyboardButton(text="$500", callback_data="qa_500")
             ],
+            [InlineKeyboardButton(text="✏️ Ввести свою сумму", callback_data="qa_custom")],
             [InlineKeyboardButton(text="⬅️ Назад", callback_data="quick_back")]
         ]
     )
     
     await callback.message.edit_text(
         "💰 **Выберите минимальную сумму ставки:**\n"
-        "(Ставки меньше этой суммы будут игнорироваться)",
+        "(Ставки меньше этой суммы будут игнорироваться)\n\n"
+        "Или введите свою кастомную сумму",
         parse_mode="Markdown",
         reply_markup=kb
     )
@@ -1334,6 +1574,27 @@ async def quick_min_amount(callback: CallbackQuery, state: FSMContext):
 @dp.callback_query(F.data.startswith("qa_"))
 async def quick_amount_selected(callback: CallbackQuery, state: FSMContext):
     """Сохранение минимальной суммы"""
+    if callback.data == "qa_custom":
+        kb = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text="⬅️ Назад", callback_data="quick_back")]
+            ]
+        )
+        
+        await callback.message.edit_text(
+            "✏️ **Ввод кастомной минимальной суммы**\n\n"
+            "💰 Введите минимальную сумму ставки в долларах:\n\n"
+            "Примеры: `3`, `7.5`, `15`\n\n"
+            "⚠️ Минимум: $0.1\n"
+            "⚠️ Максимум: $1000\n\n"
+            "Отправьте число в чат:",
+            parse_mode="Markdown",
+            reply_markup=kb
+        )
+        await state.set_state(CopyTradeState.setting_custom_min_amount)
+        await callback.answer()
+        return
+    
     min_amount = float(callback.data.split("_")[-1])
     await state.update_data(min_amount=min_amount)
     await callback.answer(f"✅ Мин. сумма: ${min_amount}")
