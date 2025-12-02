@@ -4,6 +4,7 @@ __pycache__/
 test.py
 credentials.json
 token.json
+charts/
 
 # C extensions
 *.so
