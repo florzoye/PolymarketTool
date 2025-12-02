@@ -1,4 +1,3 @@
-# PolyCopy.py
 import time
 import asyncio
 import traceback
@@ -41,11 +40,9 @@ class PolyCopy:
         self.api_secret = api_secret
         self.api_passphrase = api_passphrase
 
-        # найденные потенциальные позиции (all candidates)
         self.found_positions: List[Position] = []
 
-        # реально скопированные и исполненные позиции (для SL/TP)
-        # каждый элемент: dict { "title", "outcome", "token_id", "size", "opened_at", "margin_amount" }
+        # dict { "title", "outcome", "token_id", "size", "opened_at", "margin_amount" }
         self.tracked_positions: List[Dict] = []
 
         self.market_transactions: Dict[str, List[float]] = {}  # key -> list of timestamps
@@ -90,7 +87,6 @@ class PolyCopy:
             return
 
         if not (self.private_key and self.funder and self.margin_amount > 0):
-            # Клиент не требуется/нельзя создать (режим только мониторинга)
             print("⚠️ ClobClient не будет создан: отсутствует private_key, funder или margin_amount <= 0")
             return
 
@@ -318,7 +314,6 @@ class PolyCopy:
                     except Exception as e:
                         print(f"⚠️ Ошибка сравнения SL: {e}")
 
-                # TP: если текущий процент >= tp_percent
                 if tp_percent is not None:
                     try:
                         if float(pnl) >= float(tp_percent):
