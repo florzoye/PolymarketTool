@@ -3,69 +3,18 @@ import asyncio
 import aiohttp
 from typing import List
 
-from fake_useragent import FakeUserAgent
 from utils.customprint import CustomPrint
 from utils.decorator import retry_async
+
 from src.models.position import Position
+from src.models.datacreator import DataCreator
 
 
 class PolyScrapper:
     def __init__(self, address: str):
         self.address = address
         self.base_url = "https://data-api.polymarket.com/"
-
-    def _create_activity_request_data(self, limit: str = 10):
-        headers = {
-            'accept': 'application/json',
-            'origin': 'https://polymarket.com',
-            'user-agent': FakeUserAgent().random,
-        }
-        params = {
-            'user': self.address,
-            'limit': limit,
-            'offset': '0',
-            'sortBy': 'TIMESTAMP',
-            'sortDirection': 'DESC',
-        }
-        return params, headers
-
-    def _create_lead_request_data(self, timePeriod: str | None = 'all'):
-        headers = {
-            'accept': 'application/json',
-            'origin': 'https://polymarket.com',
-            'user-agent': FakeUserAgent().random,
-        }
-        params =  {
-            'timePeriod': timePeriod,
-            'orderBy': 'PNL',
-            'limit': '1',
-            'offset': '0',
-            'user': self.address,
-            'category': 'overall',
-        }
-        return params, headers
-
-    def _create_pos_request_data(
-            self,
-            offset: str,
-            limit="50", 
-            sortBy: str | None = 'CASHPNL',
-    ):
-        params = {
-            'user': self.address,
-            'sizeThreshold': '.5',
-            'limit': limit,
-            'offset': offset,
-            'sortBy':sortBy,
-            'sortDirection': 'DESC',
-        }
-        headers = {
-            'accept': 'application/json',
-            'origin': 'https://polymarket.com',
-            'user-agent': FakeUserAgent().random,
-        }
-        return params, headers
-    
+        self.datacreator = DataCreator()
 
     @retry_async(attempts=3)
     async def get_account_positions(
@@ -83,9 +32,10 @@ class PolyScrapper:
         all_positions = []
         async with aiohttp.ClientSession() as session:
             for offset in range(0, 300, 50):
-                params, headers = self._create_pos_request_data(
+                params, headers = self.datacreator.create_pos_request_data(
                     offset=str(offset),
                     sortBy=sortBy,
+                    address=self.address
                 )
                 async with session.get(
                     f'{self.base_url}positions',
@@ -122,7 +72,7 @@ class PolyScrapper:
         Возвращает список Position объектов
         """
         async with aiohttp.ClientSession() as session:
-            params, headers = self._create_activity_request_data(limit='30')
+            params, headers = self.datacreator.create_activity_request_data(limit='30', address=self.address)
             
             async with session.get(
                 f'{self.base_url}activity',
@@ -165,7 +115,7 @@ class PolyScrapper:
     @retry_async(attempts=3)
     async def check_leaderboard(self, timePeriod: str | None = 'all') -> dict:
         async with aiohttp.ClientSession() as session:
-            params, headers = self._create_lead_request_data(timePeriod=timePeriod)   
+            params, headers = self.datacreator.create_lead_request_data(timePeriod=timePeriod, address=self.address)   
             response = await session.get(
                 f'{self.base_url}v1/leaderboard',
                 params=params,
@@ -180,7 +130,7 @@ class PolyScrapper:
     @retry_async(attempts=3)
     async def get_value_user(self):
         async with aiohttp.ClientSession() as session:
-            _, headers = self._create_activity_request_data()
+            _, headers = self.datacreator.create_activity_request_data(address=self.address)
             params = {'user': self.address}
             response = await session.get(
                 f'{self.base_url}value',
