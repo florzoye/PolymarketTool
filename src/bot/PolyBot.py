@@ -8,7 +8,7 @@ from aiogram import F
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram import Bot, Dispatcher, types
-from aiogram.types import BotCommand, CallbackQuery
+from aiogram.types import BotCommand, CallbackQuery, FSInputFile
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 from db.users import UsersSQL
@@ -18,6 +18,7 @@ from src.bot.states import TrackSettings, RegisterState, CopyTradeState
 from src.core.PolyCopy import PolyCopy
 from src.models.settings import Settings
 from src.models.position import Position
+from src.core.PolyCharts import PolyCharts 
 from src.core.PolyScrapper import PolyScrapper
 from utils.formatters import format_money, format_pnl
 
@@ -442,13 +443,12 @@ async def show_positions(callback: CallbackQuery, state: FSMContext):
         )
         return
 
-    # Сохраняем позиции в состояние для последующего закрытия
     await state.update_data(current_positions=positions)
 
     max_show = 10
     positions = positions[:max_show]
 
-    text = f"📊 **Топ {len(positions)} позиций** по адресу `{address}`:\n\n"
+    text = f"📊 Топ {len(positions)} позиций по адресу `{address}`:\n\n"
 
     for i, pos in enumerate(positions, 1):
         title = pos.get("title", "Без названия")
@@ -457,23 +457,29 @@ async def show_positions(callback: CallbackQuery, state: FSMContext):
         percent = round(float(pos.get("percentRealizedPnl", 0) or 0), 2)
 
         pnl_emoji = "📈" if pnl >= 0 else "📉"
-        
+
         text += (
-            f"**{i}. {title[:60]}**\n"
+            f"{i}. {title[:60]}\n"
             f"💰 Стоимость: `${current}`\n"
             f"{pnl_emoji} PnL: `${pnl}` ({percent}%)\n"
+            f"🌐 График: нажми кнопку ниже\n"
             f"───────────────────────\n"
         )
-    
+
     kb = InlineKeyboardMarkup(
         inline_keyboard=[
+            *[
+                [InlineKeyboardButton(text=f"📉 График {i+1}", callback_data=f"chart_{i}")]
+                for i in range(len(positions))
+            ],
             [InlineKeyboardButton(text="🔄 Обновить", callback_data="show_positions")],
             [InlineKeyboardButton(text="❌ Закрыть позицию", callback_data="select_position_to_close")],
             [InlineKeyboardButton(text="⬅️ Главное меню", callback_data="main_menu")]
         ]
     )
-    
-    await callback.message.edit_text(text, parse_mode="Markdown", reply_markup=kb)
+
+    await callback.message.edit_text(text, reply_markup=kb)
+
 
 
 @dp.callback_query(F.data == "select_position_to_close")
@@ -1765,6 +1771,41 @@ async def quick_start_monitoring(callback: CallbackQuery, state: FSMContext):
         return
     
     await confirm_and_start_monitoring(callback, state)
+
+@dp.callback_query(F.data.startswith("chart_"))
+async def send_chart(callback: CallbackQuery, state: FSMContext):
+    index = int(callback.data.split("_")[1])  # номер позиции
+    tg_id = callback.from_user.id
+
+    user_data = await state.get_data()
+    positions = user_data.get("current_positions")
+
+    if not positions or index >= len(positions):
+        await callback.answer("Ошибка: позиция не найдена", show_alert=True)
+        return
+
+    pos = positions[index]
+    condition_id = pos.get("asset") 
+    slug = pos.get("title", "chart").replace(" ", "_")[:40]
+
+    await callback.answer("⏳ Строю график...")
+
+    charts = PolyCharts(
+        condition_id=condition_id,
+        slug=slug,
+        tg_id=tg_id
+    )
+
+    ok, path = await charts.create_chart()
+
+    if not ok:
+        await callback.message.answer(path)  
+        return
+
+    await callback.message.answer_photo(
+        photo=FSInputFile(path),
+        caption=f"📉 График: {pos.get('title', '')}"
+    )
 
 
 @dp.message(CopyTradeState.setting_custom_margin)
