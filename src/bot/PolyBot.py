@@ -417,6 +417,7 @@ async def show_main_menu(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
 
 
+
 @dp.callback_query(F.data == "show_positions")
 async def show_positions(callback: CallbackQuery, state: FSMContext):
     tg_id = callback.from_user.id
@@ -437,20 +438,28 @@ async def show_positions(callback: CallbackQuery, state: FSMContext):
                 [InlineKeyboardButton(text="⬅️ Главное меню", callback_data="main_menu")]
             ]
         )
-        await callback.message.edit_text(
-            "😕 Похоже, у тебя нет активных позиций на Polymarket.",
-            reply_markup=kb
-        )
+        try:
+            await callback.message.edit_text(
+                "😕 Похоже, у тебя нет активных позиций на Polymarket.",
+                reply_markup=kb
+            )
+        except Exception:
+            await callback.message.answer(
+                "😕 Похоже, у тебя нет активных позиций на Polymarket.",
+                reply_markup=kb
+            )
         return
 
     await state.update_data(current_positions=positions)
 
     max_show = 10
-    positions = positions[:max_show]
+    display_positions = positions[:max_show]
 
-    text = f"📊 Топ {len(positions)} позиций по адресу `{address}`:\n\n"
+    timestamp =  time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())
+    
+    text = f"📊 Топ {len(display_positions)} позиций по адресу `{address}`:\n\n"
 
-    for i, pos in enumerate(positions, 1):
+    for i, pos in enumerate(display_positions, 1):
         title = pos.get("title", "Без названия")
         current = round(float(pos.get("currentValue", 0)), 2)
         pnl = round(float(pos.get("cashPnl", 0)), 2)
@@ -465,12 +474,14 @@ async def show_positions(callback: CallbackQuery, state: FSMContext):
             f"🌐 График: нажми кнопку ниже\n"
             f"───────────────────────\n"
         )
+    
+    text += f"\n`⏱ Обновлено: {timestamp}`"
 
     kb = InlineKeyboardMarkup(
         inline_keyboard=[
             *[
                 [InlineKeyboardButton(text=f"📉 График {i+1}", callback_data=f"chart_{i}")]
-                for i in range(len(positions))
+                for i in range(len(display_positions))
             ],
             [InlineKeyboardButton(text="🔄 Обновить", callback_data="show_positions")],
             [InlineKeyboardButton(text="❌ Закрыть позицию", callback_data="select_position_to_close")],
@@ -478,7 +489,18 @@ async def show_positions(callback: CallbackQuery, state: FSMContext):
         ]
     )
 
-    await callback.message.edit_text(text, reply_markup=kb)
+    try:
+        await callback.message.edit_text(text, reply_markup=kb, parse_mode="Markdown")
+    except Exception as e:
+        error_msg = str(e).lower()
+        
+        if "no text in the message" in error_msg or "message to edit not found" in error_msg:
+            await callback.message.answer(text, reply_markup=kb, parse_mode="Markdown")
+        elif "message is not modified" in error_msg:
+            await callback.message.answer(text, reply_markup=kb, parse_mode="Markdown")
+        else:
+            logging.error(f"Ошибка при редактировании сообщения в show_positions: {e}")
+            await callback.message.answer(text, reply_markup=kb, parse_mode="Markdown")
 
 
 
@@ -1772,16 +1794,18 @@ async def quick_start_monitoring(callback: CallbackQuery, state: FSMContext):
     
     await confirm_and_start_monitoring(callback, state)
 
+
 @dp.callback_query(F.data.startswith("chart_"))
 async def send_chart(callback: CallbackQuery, state: FSMContext):
-    index = int(callback.data.split("_")[1])  # номер позиции
+    """Отправка графика с кнопкой возврата"""
+    index = int(callback.data.split("_")[1])
     tg_id = callback.from_user.id
 
     user_data = await state.get_data()
     positions = user_data.get("current_positions")
 
     if not positions or index >= len(positions):
-        await callback.answer("Ошибка: позиция не найдена", show_alert=True)
+        await callback.answer("❌ Ошибка: позиция не найдена", show_alert=True)
         return
 
     pos = positions[index]
@@ -1790,22 +1814,49 @@ async def send_chart(callback: CallbackQuery, state: FSMContext):
 
     await callback.answer("⏳ Строю график...")
 
-    charts = PolyCharts(
-        condition_id=condition_id,
-        slug=slug,
-        tg_id=tg_id
-    )
+    try:
+        charts = PolyCharts(
+            condition_id=condition_id,
+            slug=slug,
+            tg_id=tg_id
+        )
 
-    ok, path = await charts.create_chart()
+        ok, path = await charts.create_chart()
 
-    if not ok:
-        await callback.message.answer(path)  
-        return
+        if not ok:
+            await callback.message.answer(
+                f"❌ Не удалось построить график:\n{path}",
+                reply_markup=InlineKeyboardMarkup(
+                    inline_keyboard=[
+                        [InlineKeyboardButton(text="⬅️ К позициям", callback_data="show_positions")]
+                    ]
+                )
+            )
+            return
 
-    await callback.message.answer_photo(
-        photo=FSInputFile(path),
-        caption=f"📉 График: {pos.get('title', '')}"
-    )
+        nav_kb = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text="⬅️ Вернуться к позициям", callback_data="show_positions")],
+                [InlineKeyboardButton(text="🏠 Главное меню", callback_data="main_menu")]
+            ]
+        )
+
+        await callback.message.answer_photo(
+            photo=FSInputFile(path),
+            caption=f"📉 График: {pos.get('title', '')}",
+            reply_markup=nav_kb
+        )
+        
+    except Exception as e:
+        logging.error(f"Ошибка при создании графика: {e}")
+        await callback.message.answer(
+            f"❌ Произошла ошибка при создании графика",
+            reply_markup=InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [InlineKeyboardButton(text="⬅️ К позициям", callback_data="show_positions")]
+                ]
+            )
+        )
 
 
 @dp.message(CopyTradeState.setting_custom_margin)
