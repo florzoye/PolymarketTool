@@ -4,7 +4,7 @@ import asyncio
 
 sys.path.insert(0, os.path.dirname(__file__))
 
-from src.bot.PolyBot import main
+from src.bot.init_bot import main
 
 if __name__ == "__main__":
     asyncio.run(main())
