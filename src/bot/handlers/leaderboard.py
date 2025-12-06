@@ -1,7 +1,7 @@
 from aiogram import Router, F
 from aiogram.types import CallbackQuery
 
-from src.bot.cfg import users_sql
+from db.database import database
 from src.bot.keyboards import get_leaderboard_keyboard
 from src.core.PolyScrapper import PolyScrapper
 
@@ -12,7 +12,8 @@ router = Router()
 async def show_leaderboard(callback: CallbackQuery):
     """Показать рейтинг пользователя"""
     tg_id = callback.from_user.id
-    address = await users_sql.select_user_address(tg_id)
+    db = database.get()
+    address = await db.select_user_address(tg_id)
 
     if not address:
         await callback.answer("❌ Адрес не найден. Сначала введите его через /start.", show_alert=True)
@@ -46,7 +47,8 @@ async def show_leaderboard(callback: CallbackQuery):
 async def check_week_lead(callback: CallbackQuery):
     """Недельный рейтинг"""
     tg_id = callback.from_user.id
-    address = await users_sql.select_user_address(tg_id)
+    db = database.get()
+    address = await db.select_user_address(tg_id)
 
     if not address:
         await callback.answer("❌ Адрес не найден. Сначала введите его через /start.", show_alert=True)
@@ -80,7 +82,8 @@ async def check_week_lead(callback: CallbackQuery):
 async def check_day_lead(callback: CallbackQuery):
     """Дневной рейтинг"""
     tg_id = callback.from_user.id
-    address = await users_sql.select_user_address(tg_id)
+    db = database.get()
+    address = await db.select_user_address(tg_id)
 
     if not address:
         await callback.answer("❌ Адрес не найден. Сначала введите его через /start.", show_alert=True)

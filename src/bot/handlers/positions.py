@@ -5,7 +5,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.types import CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 
-from src.bot.cfg import users_sql
+from db.database import database
 from src.bot.keyboards import get_positions_keyboard, get_back_button
 from src.core.PolyScrapper import PolyScrapper
 from src.core.PolyCopy import PolyCopy
@@ -18,7 +18,8 @@ router = Router()
 async def show_positions(callback: CallbackQuery, state: FSMContext):
     """Показать позиции пользователя"""
     tg_id = callback.from_user.id
-    address = await users_sql.select_user_address(tg_id)
+    db = database.get()
+    address = await db.select_user_address(tg_id)
 
     if not address:
         await callback.answer("❌ Адрес не найден. Сначала введите его через /start.", show_alert=True)
@@ -187,6 +188,7 @@ async def execute_close_position(callback: CallbackQuery, state: FSMContext):
     """Исполнение закрытия позиции"""
     tg_id = callback.from_user.id
     data = await state.get_data()
+    db = database.get()
     
     pos_index = data.get("closing_position_index")
     positions = data.get("current_positions", [])
@@ -198,9 +200,9 @@ async def execute_close_position(callback: CallbackQuery, state: FSMContext):
     position = positions[pos_index]
     title = position.get("title", "Без названия")
     
-    private_key = await users_sql.get_private_key(tg_id)
-    user_address = await users_sql.select_user_address(tg_id)
-    api_key, api_secret, api_passphrase = await users_sql.get_api_credentials(tg_id)
+    private_key = await db.get_private_key(tg_id)
+    user_address = await db.select_user_address(tg_id)
+    api_key, api_secret, api_passphrase = await db.get_api_credentials(tg_id)
     
     if not private_key:
         try:

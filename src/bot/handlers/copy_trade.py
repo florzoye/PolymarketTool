@@ -1,6 +1,6 @@
 import asyncio
 from itertools import islice
-from src.bot.cfg import users_sql, active_monitors
+from src.bot.cfg import active_monitors, database
 
 from aiogram.filters import Command
 from aiogram import Router, F, types
@@ -55,7 +55,8 @@ async def copy_trade_back(callback: CallbackQuery, state: FSMContext):
 async def wallets_in_track(callback: CallbackQuery):
     """Показать кошельки на треке"""
     tg_id = callback.from_user.id
-    track_addresses = await users_sql.get_track_wallets(tg_id)
+    db = database.get()
+    track_addresses = await db.get_track_wallets(tg_id)
 
     if not track_addresses:
         await callback.message.edit_text(
@@ -110,12 +111,13 @@ async def add_new_track_wallet_handler(message: types.Message, state: FSMContext
     """Обработка добавления кошелька"""
     address = message.text.strip()
     tg_id = message.from_user.id
+    db = database.get()
 
     if not address.startswith("0x") or len(address) != 42:
         await message.answer("⚠️ Это невалидный Ethereum/Polymarket адрес. Попробуй снова.")
         return
 
-    await users_sql.add_track_wallet(tg_id, address)
+    await db.add_track_wallet(tg_id, address)
     await state.clear()
     
     await message.answer(
@@ -129,7 +131,8 @@ async def add_new_track_wallet_handler(message: types.Message, state: FSMContext
 async def delete_track_wallet(callback: CallbackQuery, state: FSMContext):
     """Начать удаление кошелька с трека"""
     tg_id = callback.from_user.id
-    track_wallets = await users_sql.get_track_wallets(tg_id)
+    db = database.get()
+    track_wallets = await db.get_track_wallets(tg_id)
     
     if not track_wallets:
         await callback.message.edit_text(
@@ -156,18 +159,19 @@ async def delete_track_wallet_handler(message: types.Message, state: FSMContext)
     """Обработка удаления кошелька"""
     address = message.text.strip()
     tg_id = message.from_user.id
+    db = database.get()
 
     if not address.startswith("0x") or len(address) != 42:
         await message.answer("⚠️ Это невалидный Ethereum/Polymarket адрес. Попробуй снова.")
         return
 
-    track_wallets = await users_sql.get_track_wallets(tg_id)
+    track_wallets = await db.get_track_wallets(tg_id)
     
     if address not in track_wallets:
         await message.answer("⚠️ Этот кошелек не найден в списке отслеживаемых.")
         return
 
-    await users_sql.remove_track_wallet(tg_id, address)
+    await db.remove_track_wallet(tg_id, address)
     await state.clear()
     
     await message.answer(
@@ -177,13 +181,12 @@ async def delete_track_wallet_handler(message: types.Message, state: FSMContext)
     )
 
 
-# ============== ПОЗИЦИИ КОШЕЛЬКОВ НА ТРЕКЕ ==============
-
 @router.callback_query(F.data == "track_positions")
 async def positions_wallets(callback: CallbackQuery, state: FSMContext):
     """Показать позиции кошельков на треке"""
     tg_id = callback.from_user.id
-    track_addresses = await users_sql.get_track_wallets(tg_id)
+    db = database.get()
+    track_addresses = await db.get_track_wallets(tg_id)
 
     if not track_addresses:
         await callback.message.edit_text(
@@ -377,12 +380,13 @@ async def show_track_positions(callback: CallbackQuery, state: FSMContext):
     """Показать позиции с учетом настроек"""
     tg_id = callback.from_user.id
     data = await state.get_data()
+    db = database.get()
     
     count = data.get('count', 5)
     min_value = data.get('min_value', 3.0)
     sort_by = data.get('sort_by', 'CASHPNL')
     
-    track_addresses = await users_sql.get_track_wallets(tg_id)
+    track_addresses = await db.get_track_wallets(tg_id)
     
     if not track_addresses:
         await callback.answer("❌ Нет кошельков на треке", show_alert=True)
@@ -455,7 +459,8 @@ async def show_track_positions(callback: CallbackQuery, state: FSMContext):
 async def start_copy_trade_flow(callback: CallbackQuery, state: FSMContext):
     """Начало быстрой настройки copy-trade"""
     tg_id = callback.from_user.id
-    track_addresses = await users_sql.get_track_wallets(tg_id)
+    db = database.get()
+    track_addresses = await db.get_track_wallets(tg_id)
     
     if not track_addresses:
         await callback.message.edit_text(
@@ -556,8 +561,6 @@ async def quick_setup_back(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
 
 
-# ============== ВЫБОР КОШЕЛЬКА ==============
-
 @router.callback_query(F.data == "quick_select_wallet")
 async def quick_select_wallet(callback: CallbackQuery, state: FSMContext):
     """Выбор кошелька"""
@@ -603,8 +606,6 @@ async def quick_wallet_selected(callback: CallbackQuery, state: FSMContext):
     
     await show_quick_setup_menu(callback.message, state)
 
-
-# ============== ВЫБОР ДЛИТЕЛЬНОСТИ ==============
 
 @router.callback_query(F.data == "quick_duration")
 async def quick_duration(callback: CallbackQuery, state: FSMContext):
@@ -742,8 +743,6 @@ async def quick_custom_min_amount_input(message: types.Message, state: FSMContex
         await message.answer("⚠️ Неверный формат! Введите число (например: 15 или 75.5)")
 
 
-# ============== ПЕРВЫЕ СТАВКИ ==============
-
 @router.callback_query(F.data == "quick_first_bet")
 async def quick_first_bet(callback: CallbackQuery, state: FSMContext):
     """Переключение фильтра первых ставок"""
@@ -758,8 +757,6 @@ async def quick_first_bet(callback: CallbackQuery, state: FSMContext):
     
     await show_quick_setup_menu(callback.message, state)
 
-
-# ============== КОТИРОВКИ ==============
 
 @router.callback_query(F.data == "quick_quotes")
 async def quick_quotes(callback: CallbackQuery, state: FSMContext):
@@ -826,8 +823,6 @@ async def quick_quotes_selected(callback: CallbackQuery, state: FSMContext):
     
     await show_quick_setup_menu(callback.message, state)
 
-
-# ============== МАРЖА ==============
 
 @router.callback_query(F.data == "quick_margin")
 async def quick_margin(callback: CallbackQuery, state: FSMContext):
@@ -1052,8 +1047,6 @@ async def set_tp(callback: CallbackQuery, state: FSMContext):
     await callback.answer(f"✅ Take Profit: {value}%")
 
 
-# ============== ЗАПУСК МОНИТОРИНГА ==============
-
 @router.callback_query(F.data == "quick_start_monitoring")
 async def quick_start_monitoring(callback: CallbackQuery, state: FSMContext):
     """Запуск мониторинга из быстрой настройки"""
@@ -1071,6 +1064,7 @@ async def confirm_and_start_monitoring(callback: CallbackQuery, state: FSMContex
     """Подтверждение и запуск мониторинга"""
     tg_id = callback.from_user.id
     data = await state.get_data()
+    db = database.get()
     
     if tg_id in active_monitors and not active_monitors[tg_id].done():
         kb = InlineKeyboardMarkup(
@@ -1087,9 +1081,9 @@ async def confirm_and_start_monitoring(callback: CallbackQuery, state: FSMContex
         await callback.answer()
         return
     
-    private_key = await users_sql.get_private_key(tg_id)
-    user_address = await users_sql.select_user_address(tg_id)
-    api_key, api_secret, api_passphrase = await users_sql.get_api_credentials(tg_id)
+    private_key = await db.get_private_key(tg_id)
+    user_address = await db.select_user_address(tg_id)
+    api_key, api_secret, api_passphrase = await db.get_api_credentials(tg_id)
     
     if not private_key:
         await callback.message.edit_text(
@@ -1129,14 +1123,13 @@ async def continue_without_api(callback: CallbackQuery, state: FSMContext):
     """Продолжить мониторинг без API credentials"""
     tg_id = callback.from_user.id
     data = await state.get_data()
+    db = database.get()
     
-    private_key = await users_sql.get_private_key(tg_id)
-    user_address = await users_sql.select_user_address(tg_id)
+    private_key = await db.get_private_key(tg_id)
+    user_address = await db.select_user_address(tg_id)
     
     await start_monitoring_task(callback, state, tg_id, data, private_key, user_address, None, None, None)
 
-
-# ============== УПРАВЛЕНИЕ МОНИТОРИНГОМ ==============
 
 @router.callback_query(F.data == "stop_monitoring")
 async def stop_monitoring(callback: CallbackQuery, state: FSMContext):

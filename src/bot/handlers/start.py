@@ -3,7 +3,7 @@ from aiogram import Router, F, types
 from aiogram.types import CallbackQuery
 from aiogram.fsm.context import FSMContext
 
-from src.bot.cfg import users_sql
+from db.database import database
 from src.bot.states import RegisterState
 from src.bot.keyboards import (
     get_main_menu_keyboard, 
@@ -18,7 +18,9 @@ router = Router()
 async def cmd_start(message: types.Message, state: FSMContext):
     """Команда /start - регистрация или главное меню"""
     tg_id = message.from_user.id
-    address = await users_sql.select_user_address(tg_id)
+    db = database.get()
+    
+    address = await db.select_user_address(tg_id)
 
     if address is None:
         await message.answer(
@@ -116,15 +118,16 @@ async def setup_api_no(callback: CallbackQuery, state: FSMContext):
     """Пропуск настройки API credentials"""
     tg_id = callback.from_user.id
     data = await state.get_data()
+    db = database.get()
     
     address = data.get("address")
     private_key = data.get("private_key")
     
-    await users_sql.add_user({
+    await db.add_user({
         "tg_id": tg_id,
         "address": address
     })
-    await users_sql.update_private_key(tg_id, private_key)
+    await db.update_private_key(tg_id, private_key)
     
     await state.clear()
     await callback.message.edit_text(
@@ -196,6 +199,7 @@ async def get_api_passphrase(message: types.Message, state: FSMContext):
     """Получение API Passphrase и завершение регистрации"""
     api_passphrase = message.text.strip()
     tg_id = message.from_user.id
+    db = database.get()
     
     try:
         await message.delete()
@@ -212,12 +216,12 @@ async def get_api_passphrase(message: types.Message, state: FSMContext):
     api_key = data.get("api_key")
     api_secret = data.get("api_secret")
     
-    await users_sql.add_user({
+    await db.add_user({
         "tg_id": tg_id,
         "address": address
     })
-    await users_sql.update_private_key(tg_id, private_key)
-    await users_sql.update_api_credentials(tg_id, api_key, api_secret, api_passphrase)
+    await db.update_private_key(tg_id, private_key)
+    await db.update_api_credentials(tg_id, api_key, api_secret, api_passphrase)
     
     await state.clear()
     
@@ -237,7 +241,8 @@ async def get_api_passphrase(message: types.Message, state: FSMContext):
 async def reset_wallet(callback: CallbackQuery, state: FSMContext):
     """Начало процесса смены кошелька"""
     tg_id = callback.from_user.id
-    address = await users_sql.select_user_address(tg_id)
+    db = database.get()
+    address = await db.select_user_address(tg_id)
     
     if not address:
         await callback.answer("❌ Адрес не найден. Сначала введите его через /start.", show_alert=True)
@@ -278,6 +283,7 @@ async def reset_private_key(message: types.Message, state: FSMContext):
     """Получение нового приватного ключа"""
     private_key = message.text.strip()
     tg_id = message.from_user.id
+    db = database.get()
     
     try:
         await message.delete()
@@ -291,8 +297,8 @@ async def reset_private_key(message: types.Message, state: FSMContext):
     data = await state.get_data()
     new_address = data.get("new_address")
 
-    await users_sql.update_user_address(tg_id, new_address)
-    await users_sql.update_private_key(tg_id, private_key)
+    await db.update_user_address(tg_id, new_address)
+    await db.update_private_key(tg_id, private_key)
 
     await state.clear()
     await message.answer(
@@ -310,7 +316,8 @@ async def show_main_menu(callback: CallbackQuery, state: FSMContext):
     """Возврат в главное меню"""
     await state.clear()
     tg_id = callback.from_user.id
-    address = await users_sql.select_user_address(tg_id)
+    db = database.get()
+    address = await db.select_user_address(tg_id)
     
     if not address:
         await callback.message.edit_text(
