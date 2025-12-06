@@ -1,129 +1,232 @@
-import asyncio
+import logging
+from typing import Dict, List, Optional, Tuple
+
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update, delete, func
 
-from db.sqlalchemy.models import Users, Base
-from db.sqlalchemy.session import async_session, async_engine
+from db.sqlalchemy.models import Users
+from db.models import UserModel
 
+from db.database_protocol import UsersBase
+from db.models import to_user_model
 
-class AsyncORM:
-    @staticmethod
-    async def init_db():
-        async with async_engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
+class UsersORM(UsersBase):
+    def __init__(self, session: AsyncSession):
+        self.session = session
+        self.logger = logging.getLogger(self.__class__.__name__)
 
-    @staticmethod
-    async def add_user(user: Users) -> None:
-        async with async_session() as session:
-            async with session.begin():
-                session.add(user)
+    async def create_tables(self) -> bool:
+        return True
 
-    @staticmethod
-    async def get_user_by_tg_id(tg_id: int) -> Users | None:
-        async with async_session() as session:
-            query = select(Users).where(Users.tg_id == tg_id)
-            result = await session.execute(query)
-            return result.scalar_one_or_none()
+    async def add_user(self, user: Dict) -> bool:
+        try:
+            obj = Users(
+                tg_id=user.get("tg_id"),
+                address=user.get("address"),
+                track_addresses=user.get("track_addresses", []),
+                private_key=user.get("private_key"),
+                api_key=user.get("api_key"),
+                api_secret=user.get("api_secret"),
+                api_passphrase=user.get("api_passphrase"),
+            )
+            self.session.add(obj)
+            await self.session.commit()
+            return True
+        except Exception as e:
+            self.logger.error(f"Error adding user: {e}")
+            await self.session.rollback()
+            return False
 
-    @staticmethod
-    async def get_all_users() -> list[Users]:
-        async with async_session() as session:
-            query = select(Users)
-            result = await session.execute(query)
-            return result.scalars().all()
+    async def get_user(self, tg_id: int) -> Optional[UserModel]:
+        try:
+            result = await self.session.execute(
+                select(Users).where(Users.tg_id == tg_id)
+            )
+            user = result.scalar_one_or_none()
+            return to_user_model(user)
+        except Exception as e:
+            self.logger.error(f"Error getting user {tg_id}: {e}")
+            return None
 
-    @staticmethod
-    async def filter_users(**filters) -> list[Users]:
-        """
-        Пример:
-        await AsyncORM.filter_users(address="0xABC")
-        await AsyncORM.filter_users(private_key=None)
-        """
-        async with async_session() as session:
-            query = select(Users)
-            for field, value in filters.items():
-                query = query.where(getattr(Users, field) == value)
+    async def get_all_users(self) -> List[UserModel]:
+        try:
+            result = await self.session.execute(select(Users))
+            users = result.scalars().all()
+            return [to_user_model(u) for u in users if to_user_model(u)]
+        except Exception as e:
+            self.logger.error(f"Error getting all users: {e}")
+            return []
 
-            result = await session.execute(query)
-            return result.scalars().all()
+    async def update_user_fields(self, tg_id: int, **fields) -> bool:
+        try:
+            if not fields:
+                return False
 
+            await self.session.execute(
+                update(Users).where(Users.tg_id == tg_id).values(**fields)
+            )
+            await self.session.commit()
+            return True
+        except Exception as e:
+            self.logger.error(f"Error updating user {tg_id}: {e}")
+            await self.session.rollback()
+            return False
 
-    @staticmethod
-    async def update_user_fields(tg_id: int, **fields) -> bool:
-        """
-        Пример:
-        await AsyncORM.update_user_fields(123, username="NewName", active=False)
-        """
-        async with async_session() as session:
-            async with session.begin():
-                query = select(Users).where(Users.tg_id == tg_id)
-                result = await session.execute(query)
-                user = result.scalar_one_or_none()
+    async def delete_user(self, tg_id: int) -> bool:
+        try:
+            await self.session.execute(
+                delete(Users).where(Users.tg_id == tg_id)
+            )
+            await self.session.commit()
+            return True
+        except Exception as e:
+            self.logger.error(f"Error deleting user {tg_id}: {e}")
+            await self.session.rollback()
+            return False
 
-                if not user:
-                    return False
+    async def delete_all(self) -> bool:
+        try:
+            await self.session.execute(delete(Users))
+            await self.session.commit()
+            return True
+        except Exception as e:
+            self.logger.error(f"Error deleting all users: {e}")
+            await self.session.rollback()
+            return False
 
-                for key, value in fields.items():
-                    setattr(user, key, value)
-
-                return True
-
-    @staticmethod
-    async def bulk_update(field: str, value):
-        """
-        Массовое обновление:
-        await AsyncORM.bulk_update("address", "0xDEFAULT")
-        """
-        async with async_session() as session:
-            async with session.begin():
-                stmt = update(Users).values({field: value})
-                await session.execute(stmt)
-
-
-    @staticmethod
-    async def delete_user(tg_id: int) -> bool:
-        async with async_session() as session:
-            async with session.begin():
-                query = select(Users).where(Users.tg_id == tg_id)
-                result = await session.execute(query)
-                user = result.scalar_one_or_none()
-
-                if not user:
-                    return False
-
-                await session.delete(user)
-                return True
-
-    @staticmethod
-    async def delete_all() -> None:
-        async with async_session() as session:
-            async with session.begin():
-                stmt = delete(Users)
-                await session.execute(stmt)
-
-    @staticmethod
-    async def user_exists(tg_id: int) -> bool:
-        async with async_session() as session:
-            query = select(Users.id).where(Users.tg_id == tg_id)
-            result = await session.execute(query)
+    async def user_exists(self, tg_id: int) -> bool:
+        try:
+            result = await self.session.execute(
+                select(Users.tg_id).where(Users.tg_id == tg_id).limit(1)
+            )
             return result.scalar_one_or_none() is not None
+        except Exception as e:
+            self.logger.error(f"Error checking user existence {tg_id}: {e}")
+            return False
 
-    @staticmethod
-    async def count_users() -> int:
-        async with async_session() as session:
-            query = select(func.count(Users.id))
-            result = await session.execute(query)
-            return result.scalar()
+    async def count_users(self) -> int:
+        try:
+            result = await self.session.execute(
+                select(func.count()).select_from(Users)
+            )
+            return result.scalar_one()
+        except Exception as e:
+            self.logger.error(f"Error counting users: {e}")
+            return 0
 
+    async def get_track_wallets(self, tg_id: int) -> List[str]:
+        try:
+            user = await self.get_user(tg_id)
+            return user.track_addresses if user else []
+        except Exception as e:
+            self.logger.error(f"Error getting track wallets for {tg_id}: {e}")
+            return []
 
-async def main():
-    await AsyncORM.delete_all()
-    # user = Users(tg_id=123456789)
-    # await AsyncORM.init_db()
-    # await AsyncORM.add_user(user)
-    # fetched_user = await AsyncORM.get_user_by_tg_id(123456789)
-    # print(f'{fetched_user=}')
-    # print(fetched_user.tg_id)
+    async def add_track_wallet(self, tg_id: int, wallet: str) -> bool:
+        try:
+            result = await self.session.execute(
+                select(Users).where(Users.tg_id == tg_id)
+            )
+            user = result.scalar_one_or_none()
+            
+            if not user:
+                return False
+
+            if wallet not in user.track_addresses:
+                user.track_addresses.append(wallet)
+                await self.session.commit()
+                return True
+            return False
+        except Exception as e:
+            self.logger.error(f"Error adding track wallet for {tg_id}: {e}")
+            await self.session.rollback()
+            return False
+
+    async def remove_track_wallet(self, tg_id: int, wallet: str) -> bool:
+        try:
+            result = await self.session.execute(
+                select(Users).where(Users.tg_id == tg_id)
+            )
+            user = result.scalar_one_or_none()
+            
+            if not user:
+                return False
+
+            if wallet in user.track_addresses:
+                user.track_addresses.remove(wallet)
+                await self.session.commit()
+                return True
+            return False
+        except Exception as e:
+            self.logger.error(f"Error removing track wallet for {tg_id}: {e}")
+            await self.session.rollback()
+            return False
+
+    async def get_private_key(self, tg_id: int) -> Optional[str]:
+        try:
+            user = await self.get_user(tg_id)
+            return user.private_key if user else None
+        except Exception as e:
+            self.logger.error(f"Error getting private key for {tg_id}: {e}")
+            return None
     
+    async def select_user_address(self, tg_id: int) -> Optional[str]:
+        try:
+            user = await self.get_user(tg_id)
+            return user.address if user else None
+        except Exception as e:
+            self.logger.error(f"Error getting private key for {tg_id}: {e}")
+            return None
 
-if __name__ == "__main__":
-    asyncio.run(main())
+    async def update_private_key(self, tg_id: int, new_private: str) -> bool:
+        try:
+            await self.session.execute(
+                update(Users)
+                .where(Users.tg_id == tg_id)
+                .values(private_key=new_private)
+            )
+            await self.session.commit()
+            return True
+        except Exception as e:
+            self.logger.error(f"Error updating private key for {tg_id}: {e}")
+            await self.session.rollback()
+            return False
+
+    async def update_api_credentials(
+        self, tg_id: int, api_key: str, api_secret: str, api_passphrase: str
+    ) -> bool:
+        try:
+            await self.session.execute(
+                update(Users)
+                .where(Users.tg_id == tg_id)
+                .values(
+                    api_key=api_key,
+                    api_secret=api_secret,
+                    api_passphrase=api_passphrase,
+                )
+            )
+            await self.session.commit()
+            return True
+        except Exception as e:
+            self.logger.error(f"Error updating API credentials for {tg_id}: {e}")
+            await self.session.rollback()
+            return False
+
+    async def get_api_credentials(
+        self, tg_id: int
+    ) -> Tuple[Optional[str], Optional[str], Optional[str]]:
+        try:
+            result = await self.session.execute(
+                select(
+                    Users.api_key,
+                    Users.api_secret,
+                    Users.api_passphrase
+                ).where(Users.tg_id == tg_id)
+            )
+            row = result.first()
+            if row:
+                return (row.api_key, row.api_secret, row.api_passphrase)
+            return None, None, None
+        except Exception as e:
+            self.logger.error(f"Error getting API credentials for {tg_id}: {e}")
+            return None, None, None
