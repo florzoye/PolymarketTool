@@ -1,0 +1,31 @@
+* text=auto
+
+# Python файлы - всегда LF
+*.py text eol=lf
+*.pyi text eol=lf
+
+# Конфиги - всегда LF
+*.ini text eol=lf
+*.yaml text eol=lf
+*.yml text eol=lf
+*.toml text eol=lf
+*.json text eol=lf
+*.env text eol=lf
+
+*.sh text eol=lf
+
+migration/**/*.py text eol=lf
+migration/**/*.mako text eol=lf
+
+# Бинарные файлы
+*.db binary
+*.sqlite binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.pdf binary
+
+*.lock linguist-generated=true
+uv.lock linguist-generated=true

@@ -1,7 +1,7 @@
 import json
 from typing import List, Dict, Optional
-from db.manager import AsyncDatabaseManager
-from db.schemas import (
+from db.sqlite.manager import AsyncDatabaseManager
+from db.sqlite.schemas import (
     create_users_table_sql,
     insert_users_sql,
     select_all_sql,
