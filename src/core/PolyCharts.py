@@ -1,8 +1,8 @@
 import io
 import aiohttp
 import pandas as pd
-import matplotlib.pyplot as plt
 from typing import Tuple
+import matplotlib.pyplot as plt
 
 from src.models.datacreator import DataCreator
 

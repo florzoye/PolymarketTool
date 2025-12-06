@@ -6,7 +6,6 @@ from src.core.PolyCharts import PolyCharts
 
 router = Router()
 
-
 @router.callback_query(F.data.startswith("chart_"))
 async def send_chart(callback: CallbackQuery, state: FSMContext):
     """Отправка графика позиции"""

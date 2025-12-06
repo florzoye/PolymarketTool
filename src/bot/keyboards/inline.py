@@ -1,6 +1,5 @@
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
-
 def get_main_menu_keyboard():
     """Главное меню"""
     return InlineKeyboardMarkup(

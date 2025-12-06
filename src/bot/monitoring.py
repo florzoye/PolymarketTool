@@ -3,10 +3,12 @@ import asyncio
 import logging
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
-from src.bot.cfg import bot, active_monitors
-from states import CopyTradeState
+from src.bot.states import CopyTradeState
+
 from src.core.PolyCopy import PolyCopy
 from src.core.PolyScrapper import PolyScrapper
+from src.bot.cfg import bot, active_monitors
+
 from src.models.settings import Settings
 from src.models.position import Position
 

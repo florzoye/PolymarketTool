@@ -13,8 +13,8 @@ from src.models.datacreator import DataCreator
 class PolyScrapper:
     def __init__(self, address: str):
         self.address = address
-        self.base_url = "https://data-api.polymarket.com/"
         self.datacreator = DataCreator()
+        self.base_url = "https://data-api.polymarket.com/"
 
     @retry_async(attempts=3)
     async def get_account_positions(
@@ -142,10 +142,3 @@ class PolyScrapper:
                     return None
             return round((await response.json())[0]['value'], 3)
 
-async def main():
-    adre = '0xD289B54Aa8849C5cc146899a4C56910e7eC2d0BC'
-    ins = PolyScrapper(adre)
-    print(await ins.get_account_positions())
-
-if __name__ == '__main__':
-    asyncio.run(main())

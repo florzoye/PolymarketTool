@@ -3,10 +3,12 @@ import asyncio
 import logging
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
-from src.bot.cfg import bot, active_monitors
 from src.bot.states import CopyTradeState
+from src.bot.cfg import bot, active_monitors
+
 from src.core.PolyCopy import PolyCopy
 from src.core.PolyScrapper import PolyScrapper
+
 from src.models.settings import Settings
 from src.models.position import Position
 
@@ -14,7 +16,6 @@ from src.models.position import Position
 async def start_monitoring_task(callback, state, tg_id, data, private_key, user_address, api_key, api_secret, api_passphrase):
     """Запуск мониторинга кошелька с поддержкой режима без API"""
 
-    # Основные настройки
     settings = Settings(
         exp_at=data.get("duration", 3600),
         started_at=int(time.time()),

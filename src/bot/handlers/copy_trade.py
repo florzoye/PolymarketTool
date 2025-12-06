@@ -1,18 +1,19 @@
 import asyncio
-
 from itertools import islice
-from aiogram import Router, F, types
+from src.bot.cfg import users_sql, active_monitors
+
 from aiogram.filters import Command
+from aiogram import Router, F, types
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 
-from src.bot.cfg import users_sql, active_monitors
 from src.bot.states import TrackSettings, CopyTradeState
 from src.bot.keyboards import (
     get_copy_trade_menu_keyboard, 
     get_track_wallets_keyboard,
     get_back_button
 )
+
 from src.bot.utils.monitoring import start_monitoring_task
 from src.core.PolyScrapper import PolyScrapper
 from utils.formatters import format_money, format_pnl

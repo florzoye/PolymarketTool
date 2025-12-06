@@ -11,12 +11,11 @@ from src.core.PolyScrapper import PolyScrapper
 from py_clob_client.client import ClobClient
 from py_clob_client.clob_types import ApiCreds
 from py_clob_client.exceptions import PolyApiException
-from py_clob_client.clob_types import MarketOrderArgs, OrderType
 from py_clob_client.order_builder.constants import BUY, SELL
+from py_clob_client.clob_types import MarketOrderArgs, OrderType
 
 HOST = "https://clob.polymarket.com"
 CHAIN_ID = 137
-
 
 class PolyCopy:
     def __init__(
@@ -279,9 +278,7 @@ class PolyCopy:
 
             for tracked in list(self.tracked_positions): 
                 title = tracked.get("title")
-                outcome = tracked.get("outcome")
                 token_id = tracked.get("token_id")
-                opened_size = float(tracked.get("size", 0))
 
                 pm_pos = next((p for p in positions if p.get("title") == title), None)
 

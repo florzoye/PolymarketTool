@@ -1,11 +1,15 @@
-from aiogram import Router, F, types
 from aiogram.filters import Command
-from aiogram.fsm.context import FSMContext
+from aiogram import Router, F, types
 from aiogram.types import CallbackQuery
+from aiogram.fsm.context import FSMContext
 
 from src.bot.cfg import users_sql
 from src.bot.states import RegisterState
-from src.bot.keyboards import get_main_menu_keyboard, get_api_setup_keyboard, get_back_button
+from src.bot.keyboards import (
+    get_main_menu_keyboard, 
+    get_api_setup_keyboard, 
+    get_back_button
+)
 
 router = Router()
 

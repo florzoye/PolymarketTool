@@ -1,12 +1,13 @@
-from typing import Dict
 import asyncio
+from typing import Dict
+from data.config import Config
 
 from aiogram import Bot, Dispatcher
 from aiogram.types import BotCommand
 
 from db.sqlite.users import UsersSQL
 from db.sqlite.manager import AsyncDatabaseManager
-from data.config import Config
+
 
 bot = Bot(token=Config.BOT_TOKEN)
 dp = Dispatcher()
