@@ -3,7 +3,7 @@ from functools import wraps
 from typing import TypeVar, Callable, Any
 
 from utils.customprint import CustomPrint
-from data import config
+from data.config import Config
 
 T = TypeVar("T")
 
@@ -20,14 +20,14 @@ def retry_async(
     def decorator(func: Callable[..., T]) -> Callable[..., T]:
         @wraps(func)
         async def wrapper(*args, **kwargs):
-            retry_attempts = attempts if attempts is not None else config.ATTEMPTS
+            retry_attempts = attempts if attempts is not None else Config.ATTEMPTS
             current_delay = delay
 
             for attempt in range(retry_attempts):
                 try:
                     return await func(*args, **kwargs)
                 except Exception as e:
-                    if attempt < retry_attempts - 1:  # Don't sleep on the last attempt
+                    if attempt < retry_attempts - 1:  
                         CustomPrint().warning(
                             f"Attempt {attempt + 1}/{retry_attempts} failed for {func.__name__}: {str(e)}. "
                             f"Retrying in {current_delay:.1f} seconds..."
