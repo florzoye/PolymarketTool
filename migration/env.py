@@ -12,7 +12,6 @@ from db.sqlalchemy.models import Base, Users
 
 target_metadata = Base.metadata
 
-# ОТЛАДКА: выводим информацию о метаданных
 print("=" * 50)
 print(f"Tables in metadata: {list(Base.metadata.tables.keys())}")
 print(f"Users table exists: {'users' in Base.metadata.tables}")
@@ -31,7 +30,6 @@ config.set_main_option("sqlalchemy.url", sync_url)
 
 
 def run_migrations_offline() -> None:
-    """Run migrations in 'offline' mode."""
     url = config.get_main_option("sqlalchemy.url")
     context.configure(
         url=url,
@@ -45,7 +43,6 @@ def run_migrations_offline() -> None:
 
 
 def run_migrations_online() -> None:
-    """Run migrations in 'online' mode."""
     connectable = engine_from_config(
         config.get_section(config.config_ini_section, {}),
         prefix="sqlalchemy.",
