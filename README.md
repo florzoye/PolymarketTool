@@ -35,7 +35,28 @@ cd PolymarketTool
 Далее настройки переменные окружения:
 ```bash
 copy .env.example .env #скопировать env файл
-BOT_TOKEN=your_telegram_bot_token_here # откройте его и вставьте свой токен
+# Получите токен у @BotFather в Telegram
+BOT_TOKEN=123456789:ABCdefGHIjklMNOpqrsTUVwxyz
+
+# Выберите тип базы данных: "sqlite" или "postgresql"
+DATABASE_TYPE=sqlite
+
+# SQLITE SETTINGS (если DATABASE_TYPE=sqlite)
+SQLITE_PATH=database.db
+
+# POSTGRESQL SETTINGS (если DATABASE_TYPE=postgresql)
+
+# Вариант 1: Полный URL подключения (приоритетный)
+#Формат: postgresql+asyncpg://user:password@host:port/database
+DATABASE_URL=postgresql+asyncpg://postgres:password@localhost:5432/trading_bot
+
+#Вариант 2: Раздельные параметры (используется если DATABASE_URL не задан)
+DB_HOST=localhost
+DB_PORT=5432
+DB_USER=postgres
+DB_PASSWORD=postgres
+DB_NAME=trading_bot
+
 ```
 
 1. Запуск с Docker - рекомендуемый способ
