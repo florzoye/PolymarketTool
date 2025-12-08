@@ -1,5 +1,3 @@
-# src/core/PolyClient.py
-
 import time
 import traceback
 from typing import Tuple, Optional
