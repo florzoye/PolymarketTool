@@ -53,21 +53,23 @@ async def show_positions(callback: CallbackQuery, state: FSMContext):
 
     text = f"📊 Топ {len(display_positions)} позиций по адресу `{address}`:\n\n"
 
-    for i, pos in enumerate(display_positions, 1):
-        title = pos.get("title", "Без названия")
+    for _, pos in enumerate(display_positions, 1):
+        title = pos.get("title", "Без названия")[:70]
         current = round(float(pos.get("currentValue", 0)), 2)
         pnl = round(float(pos.get("cashPnl", 0)), 2)
         percent = round(float(pos.get("percentRealizedPnl", 0) or 0), 2)
+        cur_price = round(float(pos.get("curPrice", 0)), 4)
 
-        pnl_emoji = "📈" if pnl >= 0 else "📉"
+        pnl_emoji = "🟢" if pnl >= 0 else "🔴"
+        pnl_sign = "+" if pnl >= 0 else "-"
 
         text += (
-            f"{i}. {title[:60]}\n"
-            f"💰 Стоимость: `${current}`\n"
-            f"{pnl_emoji} PnL: `${pnl}` ({percent}%)\n"
-            f"───────────────────────\n"
+            f"📌 *{title}*\n"
+            f"────────────────────\n"
+            f"💰 *Value:*       `${current}`\n"
+            f"🎯 *Price:*       `{cur_price}с`\n"
+            f"{pnl_emoji} *PnL:*         `{pnl_sign}${abs(pnl)}` ({pnl_sign}{abs(percent)}%)\n\n"
         )
-
     try:
         await callback.message.edit_text(
             text, 
