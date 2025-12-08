@@ -7,6 +7,7 @@ from src.bot.states import CopyTradeState
 from src.bot.cfg import bot, active_monitors
 
 from src.core.PolyCopy import PolyCopy
+from src.core.PolyClient import PolyClient
 from src.core.PolyScrapper import PolyScrapper
 
 from src.models.settings import Settings
@@ -32,15 +33,19 @@ async def start_monitoring_task(callback, state, tg_id, data, private_key, user_
 
     api_enabled = all([api_key, api_secret, api_passphrase])
 
-    poly_copy = PolyCopy(
-        settings,
-        scrapper,
+    poly_client = PolyClient(
         private_key=private_key,
-        margin_amount=margin_amount,
         funder=user_address,
         api_key=api_key if api_enabled else None,
         api_secret=api_secret if api_enabled else None,
         api_passphrase=api_passphrase if api_enabled else None
+    )
+
+    poly_copy = PolyCopy(
+        settings,
+        scrapper,
+        margin_amount=margin_amount,
+        client=poly_client
     )
 
     async def notify_found_position(position: Position, message: str, trade_executed: bool, trade_message: str):
