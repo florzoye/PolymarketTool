@@ -1,5 +1,3 @@
-# src/core/PolyCopy.py
-
 import time
 import asyncio
 import traceback
